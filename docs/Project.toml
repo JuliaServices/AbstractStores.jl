@@ -1,0 +1,6 @@
+[deps]
+AbstractStores = "b8592f88-5fd7-4e10-8c52-04e8e19aea3c"
+Documenter = "e30172f5-a6a5-5a46-863b-614d45cd2de4"
+
+[compat]
+Documenter = "1"
