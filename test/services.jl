@@ -26,11 +26,21 @@ function parse_image_ref(ref::AbstractString)
     return String(ref), "latest"
 end
 
+"""
+    docker_available() -> Bool
+
+Whether a Docker daemon that can run **Linux** containers is reachable.
+
+The OS check is the load-bearing part: a Windows runner has the `docker` CLI and
+a responsive daemon, but in Windows-container mode, so `docker pull mysql:8`
+fails partway through the test run rather than up front.  Asking the daemon what
+it runs turns that into a clean skip.
+"""
 function docker_available()
     Sys.which("docker") === nothing && return false
     try
-        run(pipeline(`docker info`, stdout=devnull, stderr=devnull))
-        return true
+        ostype = read(`docker info --format "{{.OSType}}"`, String)
+        return strip(ostype) == "linux"
     catch
         return false
     end

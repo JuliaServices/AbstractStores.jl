@@ -78,6 +78,13 @@ that anything worth persisting through this interface (tokens, credentials,
 session state) should not be world-readable.  Pass `permissions=nothing` to skip
 `chmod` entirely.
 
+!!! warning "Permissions are unix-only"
+    Windows has no POSIX mode bits — `chmod` there only toggles the read-only
+    flag — so on Windows these defaults do **not** restrict who can read the
+    files.  If you are persisting secrets on Windows, put the store somewhere
+    already protected by an ACL (e.g. under `%LOCALAPPDATA%`) rather than relying
+    on `permissions`.
+
 - [`supportsttl`](@ref): `true`, unless `codec` is [`RawCodec`](@ref) — expiry
   travels in the encoded [`Entry`](@ref) envelope, so a raw-bytes codec has
   nowhere to put it

@@ -78,12 +78,25 @@ end
         dir = mktempdir()
         store = FileStore{String}(dir)
         store["secret"] = "hunter2"
-        @test (filemode(joinpath(dir, "secret")) & 0o777) == 0o600
-        @test (filemode(dir) & 0o777) == 0o700
+        @test store["secret"] == "hunter2"
+
+        # Windows has no POSIX mode bits — `chmod` there only toggles read-only,
+        # so the mode assertions (and FileStore's confidentiality claim) are
+        # unix-only. See the FileStore docstring.
+        if Sys.isunix()
+            @test (filemode(joinpath(dir, "secret")) & 0o777) == 0o600
+            @test (filemode(dir) & 0o777) == 0o700
+        end
 
         open = FileStore{String}(mktempdir(); permissions=0o644, dirpermissions=0o755)
         open["public"] = "ok"
-        @test (filemode(joinpath(open.dir, "public")) & 0o777) == 0o644
+        @test open["public"] == "ok"
+        Sys.isunix() && @test (filemode(joinpath(open.dir, "public")) & 0o777) == 0o644
+
+        # permissions=nothing skips chmod entirely
+        none = FileStore{String}(mktempdir(); permissions=nothing, dirpermissions=nothing)
+        none["k"] = "v"
+        @test none["k"] == "v"
     end
 
     @testset "long keys" begin

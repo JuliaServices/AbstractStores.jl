@@ -45,7 +45,8 @@ using .OAuthStores, .TempusStores
         @test reloaded.access_token == "at_1"
         @test reloaded.refresh_token == "rt_1"
         # and the file is 0o600, as OAuth.jl's hand-written store took care to be
-        @test (filemode(joinpath(dir, readdir(dir)[1])) & 0o777) == 0o600
+        # (unix only — Windows has no POSIX mode bits)
+        Sys.isunix() && @test (filemode(joinpath(dir, readdir(dir)[1])) & 0o777) == 0o600
     end
 
     @testset "access tokens expire without hand-written checks" begin
