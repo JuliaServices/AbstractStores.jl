@@ -1,5 +1,10 @@
 # AbstractStores.jl
 
+[![](https://img.shields.io/badge/docs-stable-blue.svg)](https://JuliaServices.github.io/AbstractStores.jl/stable)
+[![](https://img.shields.io/badge/docs-dev-blue.svg)](https://JuliaServices.github.io/AbstractStores.jl/dev)
+[![Build Status](https://github.com/JuliaServices/AbstractStores.jl/workflows/CI/badge.svg)](https://github.com/JuliaServices/AbstractStores.jl/actions?query=workflow%3ACI+branch%3Amain)
+[![codecov.io](http://codecov.io/github/JuliaServices/AbstractStores.jl/coverage.svg?branch=main)](http://codecov.io/github/JuliaServices/AbstractStores.jl?branch=main)
+
 A small, backend-agnostic interface for storing simple state.
 
 Lots of Julia libraries need to persist a little bit of state — a refresh token, a
