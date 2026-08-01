@@ -5,8 +5,8 @@
     AbstractStores.SQLDialect
 
 The handful of ways SQL databases disagree about writing the same statement:
-parameter placeholders (`?` vs `\$1`), the type of a text primary key, and upsert
-syntax.
+parameter placeholders (`?` vs `\$1`), the types of the key and value columns,
+and upsert syntax.
 
 Values: [`AbstractStores.SQLITE`](@ref), [`AbstractStores.MYSQL`](@ref),
 [`AbstractStores.POSTGRES`](@ref).  [`SQLStore`](@ref) detects the right one from
@@ -16,14 +16,21 @@ struct SQLDialect
     name::Symbol
     numbered::Bool      # $1, $2, ... instead of ?
     keytype::String
+    valuetype::String
 end
 
 "Dialect for SQLite.jl connections. See [`SQLDialect`](@ref)."
-const SQLITE = SQLDialect(:SQLite, false, "TEXT")
+const SQLITE = SQLDialect(:SQLite, false, "TEXT", "TEXT")
+# The explicit binary collation is load-bearing: MySQL's default utf8mb4
+# collation is case- and accent-insensitive, under which "Key" and "key" would be
+# the *same primary key* and silently upsert over each other. MEDIUMTEXT rather
+# than TEXT because TEXT caps values at 64KiB (~48KiB of payload after base64).
 "Dialect for MySQL.jl / MariaDB connections. See [`SQLDialect`](@ref)."
-const MYSQL = SQLDialect(:MySQL, false, "VARCHAR(512)")
+const MYSQL = SQLDialect(:MySQL, false,
+                         "VARCHAR(512) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin",
+                         "MEDIUMTEXT")
 "Dialect for Postgres.jl / LibPQ.jl connections. See [`SQLDialect`](@ref)."
-const POSTGRES = SQLDialect(:Postgres, true, "TEXT")
+const POSTGRES = SQLDialect(:Postgres, true, "TEXT", "TEXT")
 
 placeholder(d::SQLDialect, i::Integer) = d.numbered ? string('$', i) : "?"
 placeholders(d::SQLDialect, n::Integer) = join((placeholder(d, i) for i in 1:n), ", ")
@@ -59,8 +66,8 @@ between them.  One implementation covers every SQL backend.
 # Schema
 
     CREATE TABLE <table> (
-        store_key   TEXT PRIMARY KEY,   -- VARCHAR(512) on MySQL
-        store_value TEXT NOT NULL,      -- base64 of the codec's bytes
+        store_key   TEXT PRIMARY KEY,   -- VARCHAR(512) ... COLLATE utf8mb4_bin on MySQL
+        store_value TEXT NOT NULL,      -- base64 of the codec's bytes; MEDIUMTEXT on MySQL
         expires_at  BIGINT,             -- unix milliseconds; NULL means never
         token       BIGINT NOT NULL     -- compare-and-swap token
     )
@@ -70,6 +77,11 @@ crossing the driver boundary are `String` and `Int64`.  That costs 33% in size a
 buys identical behavior on every driver with no binary-binding quirks.  Expiry is
 unix milliseconds compared against a bound parameter, so no server-side time or
 timezone functions are involved.
+
+Keys compare byte-exactly on every dialect: MySQL's key column carries an
+explicit binary collation (its default collation would fold case and accents,
+making `"Key"` and `"key"` the same row), and prefix listing filters
+client-side where a dialect's `LIKE` is not case-sensitive (SQLite).
 
 `table` is interpolated into SQL and is therefore restricted to alphanumerics and
 underscores.  Everything else — keys, values, expiry — is bound as a parameter.
@@ -106,9 +118,13 @@ by [`sweep!`](@ref).
 !!! note "Connection sharing and nested transactions"
     Every statement is issued under a store-local `ReentrantLock`, because
     database drivers generally assume one connection has one user at a time.
-    Sharing a `SQLStore` (or its connection) across tasks is therefore safe, but
-    calling `modify!` from inside a transaction you opened yourself is not —
-    `modify!` opens its own.
+    Sharing *a* `SQLStore` across tasks is therefore safe.  The lock is per
+    store, not per connection: two `SQLStore`s (or a store and your own code)
+    sharing one connection are **not** coordinated — give each store its own
+    connection, or serialize access yourself.  Calling `modify!` from inside a
+    transaction you opened yourself is likewise unsupported — `modify!` opens
+    its own.  Prepared statements are cached for the life of the store and are
+    released when the connection is closed.
 
 !!! note "Requires DBInterface.jl"
     The methods live in a package extension.  `using DBInterface` alongside your
