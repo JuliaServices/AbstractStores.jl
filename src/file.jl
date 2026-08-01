@@ -1,22 +1,40 @@
 # FileStore: one file per key, in a directory the store owns.
 
+# Bytes stored raw in a filename. Uppercase letters are deliberately *not* here:
+# the default filesystems on macOS (APFS) and Windows (NTFS) are
+# case-insensitive, so filenames differing only in case name the *same file*,
+# and two distinct keys must never collide. Escaping all non-ASCII likewise
+# sidesteps APFS treating differently-normalized Unicode as the same name.
+# Every canonical filename is therefore pure `[a-z0-9._-]` plus `%XX` escapes,
+# on which no filesystem case-folding or normalization can cause a collision.
 const SAFE_KEY_BYTES = let safe = falses(256)
-    for c in "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._-"
+    for c in "abcdefghijklmnopqrstuvwxyz0123456789._-"
         safe[UInt8(c) + 1] = true
     end
     safe
 end
+
+# Windows reserves these device names case-insensitively and regardless of
+# extension ("con", "CON.txt", ...); encoding the first byte of a reserved stem
+# keeps a store directory portable across operating systems.
+const WINDOWS_RESERVED = Set(["con", "prn", "aux", "nul",
+                              ("com$i" for i in 1:9)..., ("lpt$i" for i in 1:9)...])
 
 const MAX_FILENAME_BYTES = 255
 
 """
     AbstractStores.encodekey(key) -> String
 
-Percent-encode `key` into a single safe filename.  Every byte outside
-`[A-Za-z0-9._-]` becomes `%XX`, so `/`, `..`, NUL, and non-ASCII cannot escape
-the store directory.  A leading `.` is always encoded, which keeps `.`, `..`, and
-dotfile-lookalikes out of the namespace and lets listing skip dotfiles
-(`.DS_Store`, our own temp files) without ambiguity.
+Percent-encode `key` into a single safe, canonical filename.
+
+Every byte outside `[a-z0-9._-]` becomes `%XX`, so `/`, `..`, NUL, and
+non-ASCII cannot escape the store directory — and, because uppercase and
+non-ASCII bytes are always escaped, two distinct keys cannot collide on a
+case-insensitive or Unicode-normalizing filesystem (the defaults on macOS and
+Windows).  A leading `.` is also encoded, keeping `.`, `..`, and dotfile
+lookalikes out of the namespace so listing can skip dotfiles (`.DS_Store`, our
+own temp files) without ambiguity, as is the first byte of a Windows-reserved
+device name (`con`, `nul`, `com1`, …).
 """
 function encodekey(key::AbstractString)
     io = IOBuffer()
@@ -28,15 +46,21 @@ function encodekey(key::AbstractString)
         end
     end
     name = String(take!(io))
-    startswith(name, '.') && (name = "%2E" * name[2:end])
+    if startswith(name, '.')
+        name = "%2E" * name[2:end]
+    elseif first(split(name, '.'; limit=2)) in WINDOWS_RESERVED
+        name = string('%', uppercase(string(UInt8(name[1]); base=16, pad=2)), name[2:end])
+    end
     return name
 end
 
 """
     AbstractStores.decodekey(name) -> Union{String,Nothing}
 
-Inverse of [`encodekey`](@ref).  Returns `nothing` for names that are not valid
-encodings, so listing can skip files the store did not write.
+Inverse of [`encodekey`](@ref).  Returns `nothing` for any name that is not the
+*canonical* encoding of a key — verified by round-tripping the decoded key back
+through `encodekey` — so listing skips files the store did not write, and no two
+listable names can decode to the same key.
 """
 function decodekey(name::AbstractString)
     bytes = codeunits(name)
@@ -55,7 +79,8 @@ function decodekey(name::AbstractString)
             i += 1
         end
     end
-    return String(take!(io))
+    key = String(take!(io))
+    return encodekey(key) == name ? key : nothing
 end
 
 """
@@ -64,14 +89,18 @@ end
 A store that persists one file per key under `dir`, creating the directory if
 needed.
 
-Writes go to a temporary file in the same directory and are then `mv`'d into
-place, so a reader never observes a half-written value and a crash mid-write
-cannot corrupt an existing entry.
+Writes go to a temporary file in the same directory and are then atomically
+renamed into place, so a reader never observes a half-written value and a crash
+mid-write cannot lose or corrupt an existing entry.
 
 Keys are percent-encoded into filenames (see [`encodekey`](@ref)), which makes
 path traversal structurally impossible — a key of `"../../etc/passwd"` names a
-file called `%2E%2E%2F%2E%2E%2Fetc%2Fpasswd` inside `dir`.  Keys whose encoded
-form exceeds $MAX_FILENAME_BYTES bytes are rejected.
+file called `%2E.%2F..%2Fetc%2Fpasswd` inside `dir`.  Uppercase and non-ASCII
+bytes are escaped too, so keys differing only in case or Unicode normalization
+stay distinct even on the case-insensitive filesystems that are the default on
+macOS and Windows, and Windows-reserved device names (`con`, `nul`, …) are
+handled.  Keys whose encoded form exceeds $MAX_FILENAME_BYTES bytes are
+rejected, as is the empty key (it has no filename).
 
 Files are created `0o600` and the directory `0o700` by default, on the assumption
 that anything worth persisting through this interface (tokens, credentials,
@@ -135,6 +164,8 @@ isatomic(::FileStore) = false
 Base.lock(f, store::FileStore) = lock(f, store.lock)
 
 function keypath(store::FileStore, key::AbstractString)
+    isempty(key) && throw(ArgumentError(
+        "FileStore cannot store the empty key \"\": it has no filename"))
     name = encodekey(key)
     sizeof(name) <= MAX_FILENAME_BYTES || throw(ArgumentError(
         "key encodes to a $(sizeof(name))-byte filename, exceeding the " *
@@ -162,7 +193,8 @@ function Base.get(store::FileStore, key::AbstractString, default)
         entry = readentry(store, path)
         entry === nothing && return default
         if isexpired(entry)
-            rm(path; force=true)
+            # best-effort reclamation: reading must not require write access
+            try rm(path; force=true) catch end
             return default
         end
         return entry.value
@@ -183,7 +215,11 @@ function Base.put!(store::FileStore{T}, key::AbstractString, value; ttl=nothing)
                 write(io, bytes)
             end
             store.permissions === nothing || chmod(tmp, Int(store.permissions))
-            mv(tmp, path; force=true)
+            # `Base.Filesystem.rename`, not `mv(force=true)`: uv rename replaces
+            # an existing destination atomically, whereas `mv` on Julia < 1.12
+            # deletes the destination first — a crash in between would lose the
+            # old value, and a concurrent reader would see the key vanish.
+            Base.Filesystem.rename(tmp, path)
         catch
             rm(tmp; force=true)
             rethrow()
