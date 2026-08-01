@@ -19,5 +19,4 @@ const TOKENS = [Token("at_1", 3600, ["read"]),
     include("core.jl")
     include("codecs.jl")
     include("backends.jl")
-    include("examples.jl")
 end

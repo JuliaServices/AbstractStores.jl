@@ -44,7 +44,8 @@ function Base.get(store::ObjectStore, key::AbstractString, default)
     entry = readentry(store, key)
     entry === nothing && return default
     if isexpired(entry)
-        delete!(store, key)
+        # best-effort reclamation: reading must not require delete permission
+        try delete!(store, key) catch end
         return default
     end
     return entry.value
@@ -103,6 +104,22 @@ function Base.keys(store::ObjectStore; prefix::AbstractString="")
         push!(result, key)
     end
     return result
+end
+
+# Override the keys()-based fallback: `empty!` must reclaim expired entries
+# too, and the envelope codec's `keys` both hides them and reads every object.
+# Deleting straight off the listing is one round-trip per object, no reads.
+function Base.empty!(store::ObjectStore; prefix::AbstractString="")
+    objects = CloudStore.list(store.bucket; prefix=objectkey(store, prefix),
+                              credentials=store.credentials)
+    for obj in objects
+        try
+            CloudStore.delete(store.bucket, obj.key; credentials=store.credentials)
+        catch e
+            is404(e) || rethrow()
+        end
+    end
+    return store
 end
 
 function AbstractStores.sweep!(store::ObjectStore{T}) where {T}

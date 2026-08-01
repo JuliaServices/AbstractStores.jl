@@ -1,22 +1,43 @@
 # FileStore: one file per key, in a directory the store owns.
 
+# Bytes stored raw in a filename. Uppercase letters are deliberately *not* here:
+# the default filesystems on macOS (APFS) and Windows (NTFS) are
+# case-insensitive, so filenames differing only in case name the *same file*,
+# and two distinct keys must never collide. Escaping all non-ASCII likewise
+# sidesteps APFS treating differently-normalized Unicode as the same name.
+# Every canonical filename is therefore pure `[a-z0-9._-]` plus `%XX` escapes,
+# on which no filesystem case-folding or normalization can cause a collision.
 const SAFE_KEY_BYTES = let safe = falses(256)
-    for c in "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._-"
+    for c in "abcdefghijklmnopqrstuvwxyz0123456789._-"
         safe[UInt8(c) + 1] = true
     end
     safe
 end
 
+# Windows reserves these device names case-insensitively and regardless of
+# extension ("con", "CON.txt", ...); encoding the first byte of a reserved stem
+# keeps a store directory portable across operating systems.
+const WINDOWS_RESERVED = Set(["con", "prn", "aux", "nul",
+                              ("com$i" for i in 1:9)..., ("lpt$i" for i in 1:9)...])
+
 const MAX_FILENAME_BYTES = 255
+# Widest adornment `put!` wraps around a name for its temp file:
+# ".tmp-" + name + "-" + pid (≤10 digits) + "-" + rand(UInt32) (≤10 digits).
+const TMP_NAME_OVERHEAD = 27
 
 """
     AbstractStores.encodekey(key) -> String
 
-Percent-encode `key` into a single safe filename.  Every byte outside
-`[A-Za-z0-9._-]` becomes `%XX`, so `/`, `..`, NUL, and non-ASCII cannot escape
-the store directory.  A leading `.` is always encoded, which keeps `.`, `..`, and
-dotfile-lookalikes out of the namespace and lets listing skip dotfiles
-(`.DS_Store`, our own temp files) without ambiguity.
+Percent-encode `key` into a single safe, canonical filename.
+
+Every byte outside `[a-z0-9._-]` becomes `%XX`, so `/`, `..`, NUL, and
+non-ASCII cannot escape the store directory — and, because uppercase and
+non-ASCII bytes are always escaped, two distinct keys cannot collide on a
+case-insensitive or Unicode-normalizing filesystem (the defaults on macOS and
+Windows).  A leading `.` is also encoded, keeping `.`, `..`, and dotfile
+lookalikes out of the namespace so listing can skip dotfiles (`.DS_Store`, our
+own temp files) without ambiguity, as is the first byte of a Windows-reserved
+device name (`con`, `nul`, `com1`, …).
 """
 function encodekey(key::AbstractString)
     io = IOBuffer()
@@ -28,17 +49,27 @@ function encodekey(key::AbstractString)
         end
     end
     name = String(take!(io))
-    startswith(name, '.') && (name = "%2E" * name[2:end])
+    if startswith(name, '.')
+        name = "%2E" * name[2:end]
+    elseif first(split(name, '.'; limit=2)) in WINDOWS_RESERVED
+        name = string('%', uppercase(string(UInt8(name[1]); base=16, pad=2)), name[2:end])
+    end
+    # Win32 strips trailing dots from a path component, so "a" and "a." would
+    # name the same file; a trailing space is already escaped above.
+    endswith(name, '.') && (name = name[1:end-1] * "%2E")
     return name
 end
 
 """
     AbstractStores.decodekey(name) -> Union{String,Nothing}
 
-Inverse of [`encodekey`](@ref).  Returns `nothing` for names that are not valid
-encodings, so listing can skip files the store did not write.
+Inverse of [`encodekey`](@ref).  Returns `nothing` for any name that is not the
+*canonical* encoding of a key — verified by round-tripping the decoded key back
+through `encodekey` — so listing skips files the store did not write, and no two
+listable names can decode to the same key.
 """
 function decodekey(name::AbstractString)
+    isempty(name) && return nothing     # "" round-trips, but is not a legal key
     bytes = codeunits(name)
     io = IOBuffer()
     i = 1
@@ -55,7 +86,8 @@ function decodekey(name::AbstractString)
             i += 1
         end
     end
-    return String(take!(io))
+    key = String(take!(io))
+    return encodekey(key) == name ? key : nothing
 end
 
 """
@@ -64,14 +96,19 @@ end
 A store that persists one file per key under `dir`, creating the directory if
 needed.
 
-Writes go to a temporary file in the same directory and are then `mv`'d into
-place, so a reader never observes a half-written value and a crash mid-write
-cannot corrupt an existing entry.
+Writes go to a temporary file in the same directory and are then atomically
+renamed into place, so a reader never observes a half-written value and a crash
+mid-write cannot lose or corrupt an existing entry.
 
 Keys are percent-encoded into filenames (see [`encodekey`](@ref)), which makes
 path traversal structurally impossible — a key of `"../../etc/passwd"` names a
-file called `%2E%2E%2F%2E%2E%2Fetc%2Fpasswd` inside `dir`.  Keys whose encoded
-form exceeds $MAX_FILENAME_BYTES bytes are rejected.
+file called `%2E.%2F..%2Fetc%2Fpasswd` inside `dir`.  Uppercase and non-ASCII
+bytes are escaped too, so keys differing only in case or Unicode normalization
+stay distinct even on the case-insensitive filesystems that are the default on
+macOS and Windows, and Windows-reserved device names (`con`, `nul`, …) are
+handled.  Keys whose encoded form exceeds $(MAX_FILENAME_BYTES - TMP_NAME_OVERHEAD)
+bytes are rejected (a $MAX_FILENAME_BYTES-byte filename limit, less the temp-file
+adornment), as is the empty key (it has no filename).
 
 Files are created `0o600` and the directory `0o700` by default, on the assumption
 that anything worth persisting through this interface (tokens, credentials,
@@ -135,10 +172,14 @@ isatomic(::FileStore) = false
 Base.lock(f, store::FileStore) = lock(f, store.lock)
 
 function keypath(store::FileStore, key::AbstractString)
+    isempty(key) && throw(ArgumentError(
+        "FileStore cannot store the empty key \"\": it has no filename"))
     name = encodekey(key)
-    sizeof(name) <= MAX_FILENAME_BYTES || throw(ArgumentError(
+    # The budget covers the temp-file adornment too, so a key accepted here
+    # cannot fail later with an opaque ENAMETOOLONG at write time.
+    sizeof(name) <= MAX_FILENAME_BYTES - TMP_NAME_OVERHEAD || throw(ArgumentError(
         "key encodes to a $(sizeof(name))-byte filename, exceeding the " *
-        "$MAX_FILENAME_BYTES-byte limit: $(repr(String(key)))"))
+        "$(MAX_FILENAME_BYTES - TMP_NAME_OVERHEAD)-byte limit: $(repr(String(key)))"))
     return joinpath(store.dir, name)
 end
 
@@ -162,7 +203,8 @@ function Base.get(store::FileStore, key::AbstractString, default)
         entry = readentry(store, path)
         entry === nothing && return default
         if isexpired(entry)
-            rm(path; force=true)
+            # best-effort reclamation: reading must not require write access
+            try rm(path; force=true) catch end
             return default
         end
         return entry.value
@@ -183,7 +225,15 @@ function Base.put!(store::FileStore{T}, key::AbstractString, value; ttl=nothing)
                 write(io, bytes)
             end
             store.permissions === nothing || chmod(tmp, Int(store.permissions))
-            mv(tmp, path; force=true)
+            # `Base.Filesystem.rename`, not `mv(force=true)`: mv on Julia < 1.12
+            # deletes the destination before renaming, so a crash in between
+            # loses the old value and a concurrent reader sees the key vanish.
+            # rename replaces atomically on every supported Julia; the caveats
+            # are that 1.10/1.11's rename falls back to a copy+delete if the
+            # rename syscall itself fails (same-directory renames don't), and
+            # on Windows a destination held open by another process can raise a
+            # sharing violation where mv would have deleted it first.
+            Base.Filesystem.rename(tmp, path)
         catch
             rm(tmp; force=true)
             rethrow()
@@ -229,6 +279,20 @@ function Base.keys(store::FileStore; prefix::AbstractString="")
         push!(result, key)
     end
     return result
+end
+
+# Override the keys()-based fallback: `empty!` must reclaim expired entries
+# too, and the envelope codec's `keys` both hides them and reads every file.
+function Base.empty!(store::FileStore; prefix::AbstractString="")
+    names = @lock store.lock readdir(store.dir; sort=false)
+    for name in names
+        startswith(name, '.') && continue
+        key = decodekey(name)
+        key === nothing && continue
+        startswith(key, prefix) || continue
+        @lock store.lock rm(joinpath(store.dir, name); force=true)
+    end
+    return store
 end
 
 function sweep!(store::FileStore)

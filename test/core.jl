@@ -40,23 +40,55 @@ end
 
     @testset "key encoding" begin
         # round-trip
-        for key in ["plain", "a/b", "../../etc/passwd", "", ".", "..", ".hidden",
-                    "ünïcødé", "%2F", "with space", "\0nul", "\r\n", "tab\t"]
+        for key in ["plain", "a/b", "../../etc/passwd", ".", "..", ".hidden",
+                    "ünïcødé", "%2F", "with space", "\0nul", "\r\n", "tab\t",
+                    "CASE", "MixedCase", "con", "COM1.txt", "console", "nul.a.b",
+                    "trail.", "trail ", "a...", "..."]
             @test decodekey(encodekey(key)) == key
         end
+        # Win32 strips trailing dots (and spaces) from a path component, so a
+        # canonical name must never end in either
+        for key in ["a.", "..", "...", "con.", "dot.dot.", "sp. "]
+            name = encodekey(key)
+            @test !endswith(name, '.') && !endswith(name, ' ')
+        end
+        @test encodekey("a.") == "a%2E"
+        @test encodekey("..") == "%2E%2E"
+        @test decodekey("%2E.") === nothing    # the old spelling of ".." is no longer canonical
         # nothing escapes the directory, and no name is a dotfile
         for key in ["../x", "..", ".", "/abs", "a/../../b", ".hidden"]
             name = encodekey(key)
             @test !occursin('/', name)
             @test !startswith(name, '.')
         end
-        # distinct keys never collide
-        keyset = ["a/b", "a%2Fb", "a", "b", "A", "%", "%%"]
-        @test length(unique(encodekey.(keyset))) == length(keyset)
+        # distinct keys never collide — even under a case-folding, unicode-
+        # normalizing filesystem (APFS, NTFS), so encoded names may differ only
+        # in [a-z0-9._-] and uppercase hex escapes
+        keyset = ["a/b", "a%2Fb", "a", "b", "A", "%", "%%", "case", "CASE",
+                  "cafe", "café"]
+        names = encodekey.(keyset)
+        @test length(unique(names)) == length(keyset)
+        @test length(unique(lowercase.(names))) == length(keyset)
+        # Windows-reserved device names never appear verbatim
+        for key in ["con", "CON", "nul.txt", "com1", "lpt9.log"]
+            stem = first(split(encodekey(key), '.'; limit=2))
+            @test !(lowercase(stem) in AbstractStores.WINDOWS_RESERVED)
+        end
         # non-encodings are rejected rather than silently mangled
         @test decodekey("%") === nothing
         @test decodekey("%ZZ") === nothing
         @test decodekey("%4") === nothing
+        # ...and so are non-canonical spellings, so no two listable names can
+        # decode to the same key
+        @test decodekey("%61") === nothing          # 'a' is safe, never escaped
+        @test decodekey("%2f") === nothing          # lowercase hex is never emitted
+        @test decodekey("a%2Eb") === nothing        # '.' never escaped mid-name
+        @test decodekey("a%2E") == "a."             # ...but always escaped trailing
+        @test decodekey("%2E") == "."               # ...and leading
+        @test decodekey("a b") === nothing          # raw unsafe byte: not our file
+        @test decodekey("CASE") === nothing         # raw uppercase: not our file
+        @test decodekey("con") === nothing          # reserved stem: we escape it
+        @test decodekey(encodekey("CASE")) == "CASE"
     end
 
     @testset "on-disk layout" begin
@@ -104,6 +136,35 @@ end
         @test_throws ArgumentError store["x"^300] = "too long"
         store["x"^200] = "fits"           # 200 chars encode to 200 bytes
         @test store["x"^200] == "fits"
+        # the budget leaves room for the temp-file adornment, so the boundary
+        # is a clean ArgumentError, never an ENAMETOOLONG at write time
+        limit = AbstractStores.MAX_FILENAME_BYTES - AbstractStores.TMP_NAME_OVERHEAD
+        store["x"^limit] = "exactly"
+        @test store["x"^limit] == "exactly"
+        @test_throws ArgumentError store["x"^(limit + 1)] = "one too many"
+    end
+
+    @testset "the empty key has no filename" begin
+        store = FileStore{String}(mktempdir())
+        @test_throws ArgumentError store[""] = "v"
+        @test_throws ArgumentError store[""]
+    end
+
+    @testset "case-colliding keys stay distinct on any filesystem" begin
+        # APFS and NTFS case-fold filenames; the encoding must absorb that
+        dir = mktempdir()
+        store = FileStore{String}(dir)
+        store["token"] = "lower"
+        store["TOKEN"] = "upper"
+        store["Token"] = "mixed"
+        @test store["token"] == "lower"
+        @test store["TOKEN"] == "upper"
+        @test store["Token"] == "mixed"
+        @test length(collect(keys(store))) == 3
+        # reserved names are storable as keys
+        store["con"] = "device?"
+        @test store["con"] == "device?"
+        @test "con" in keys(store)
     end
 
     @testset "persistence across store instances" begin
@@ -197,6 +258,23 @@ end
     @test_throws ArgumentError keys(EmptyStore())
 end
 
+@testset "checkstore" begin
+    mem = MemoryStore{String}()
+    @test checkstore(mem) === mem
+    @test checkstore(mem; ttl=true, atomic=true, listing=true) === mem
+
+    file = FileStore{String}(mktempdir())               # ttl yes, atomic no
+    @test checkstore(file; ttl=true) === file
+    @test_throws ArgumentError checkstore(file; atomic=true)
+
+    raw = FileStore{String}(mktempdir(); codec=RawCodec())   # no ttl either
+    @test_throws ArgumentError checkstore(raw; ttl=true)
+
+    # the error says which trait is missing
+    err = try checkstore(file; atomic=true); nothing catch e; e end
+    @test err isa ArgumentError && occursin("isatomic", err.msg)
+end
+
 @testset "ttl normalization" begin
     now = DateTime(2026, 7, 30, 12, 0, 0)
     @test expiryof(nothing) === nothing
@@ -245,7 +323,10 @@ end
     @test placeholder(POSTGRES, 3) == "\$3"
     @test placeholders(SQLITE, 3) == "?, ?, ?"
     @test placeholders(POSTGRES, 3) == "\$1, \$2, \$3"
-    @test MYSQL.keytype == "VARCHAR(512)"
+    # VARBINARY: every utf8mb4 collation folds something — case and accents by
+    # default, trailing spaces even under utf8mb4_bin (PAD SPACE)
+    @test MYSQL.keytype == "VARBINARY(512)"
+    @test MYSQL.valuetype == "MEDIUMTEXT"
 
     @test likeprefix("") == "%"
     @test likeprefix("a/b") == "a/b%"

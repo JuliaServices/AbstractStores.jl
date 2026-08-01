@@ -80,6 +80,25 @@ end
 # Redis expires keys itself; nothing to reclaim.
 AbstractStores.sweep!(::RedisStore) = 0
 
+# Run the CAS script by SHA, loading it at most once per *store* (stores
+# sharing a client each load it once; the load is idempotent). If the server
+# has lost it (SCRIPT FLUSH, restart), fall back to a plain EVAL for this call
+# and reload on the next.
+function evalcas(store::RedisStore, args::AbstractString...)
+    sha = store.scriptsha[]
+    if isempty(sha)
+        sha = Redis.execute(store.client, rawcommand(String, "SCRIPT", "LOAD", CAS_SCRIPT))
+        store.scriptsha[] = sha
+    end
+    try
+        return Redis.execute(store.client, rawcommand(Int, "EVALSHA", sha, args...))
+    catch e
+        occursin("NOSCRIPT", sprint(showerror, e)) || rethrow()
+        store.scriptsha[] = ""
+        return Redis.execute(store.client, rawcommand(Int, "EVAL", CAS_SCRIPT, args...))
+    end
+end
+
 function AbstractStores.modify!(f, store::RedisStore, key::AbstractString; ttl=nothing)
     k = String(key)
     secs = ttlseconds(ttl)
@@ -91,9 +110,7 @@ function AbstractStores.modify!(f, store::RedisStore, key::AbstractString; ttl=n
         new = f(old)
         new === old && return new       # unchanged: don't write, don't touch the expiry
         payload = new === nothing ? "-" : redisencode(store, new)[2]
-        won = Redis.execute(store.client,
-            rawcommand(Int, "EVAL", CAS_SCRIPT, "1", k, token, payload, px))
-        won == 1 && return new
+        evalcas(store, "1", k, token, payload, px) == 1 && return new
     end
     throw(ConcurrencyError(k, MAX_CAS_ATTEMPTS))
 end

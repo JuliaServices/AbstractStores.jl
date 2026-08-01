@@ -71,7 +71,7 @@ function AbstractStores.createtable!(store::SQLStore)
     exec!(store, """
         CREATE TABLE IF NOT EXISTS $(store.table) (
             store_key $(store.dialect.keytype) NOT NULL PRIMARY KEY,
-            store_value TEXT NOT NULL,
+            store_value $(store.dialect.valuetype) NOT NULL,
             expires_at BIGINT,
             token BIGINT NOT NULL
         )""")
@@ -115,17 +115,35 @@ function Base.haskey(store::SQLStore, key::AbstractString)
         (String(key), nowms())) === true
 end
 
+# The LIKE is an index-friendly prefilter; the `startswith` afterward is the
+# contract. SQLite's LIKE is case-insensitive for ASCII no matter how the column
+# is declared, so without the client-side filter `keys(prefix="NS/")` would list
+# (and `empty!` would delete!) "ns/..." keys.
 function Base.keys(store::SQLStore; prefix::AbstractString="")
     d = store.dialect
-    return fetchall(row -> String(row.store_key), store,
+    ks = fetchall(row -> String(row.store_key), store,
         "SELECT store_key FROM $(store.table) WHERE store_key LIKE $(placeholder(d, 1)) ESCAPE '!' " *
         "AND (expires_at IS NULL OR expires_at > $(placeholder(d, 2)))",
         (likeprefix(prefix), nowms()))
+    return isempty(prefix) ? ks : filter!(k -> startswith(k, prefix), ks)
 end
 
 function Base.empty!(store::SQLStore; prefix::AbstractString="")
-    exec!(store, "DELETE FROM $(store.table) WHERE store_key LIKE " *
-          "$(placeholder(store.dialect, 1)) ESCAPE '!'", (likeprefix(prefix),))
+    d = store.dialect
+    if isempty(prefix)
+        exec!(store, "DELETE FROM $(store.table)")
+    else
+        # One statement, so the delete stays atomic. The LIKE is the
+        # index-friendly prefilter; the substr equality is the byte-exact guard
+        # SQLite's case-folding LIKE needs. substr counts characters on TEXT
+        # columns but bytes on MySQL's VARBINARY, hence the dialect-aware
+        # length. No expiry filter: `empty!` reclaims expired rows too.
+        n = d.name === :MySQL ? ncodeunits(prefix) : length(prefix)
+        exec!(store,
+            "DELETE FROM $(store.table) WHERE store_key LIKE $(placeholder(d, 1)) ESCAPE '!' " *
+            "AND substr(store_key, 1, $(placeholder(d, 2))) = $(placeholder(d, 3))",
+            (likeprefix(prefix), n, String(prefix)))
+    end
     return store
 end
 

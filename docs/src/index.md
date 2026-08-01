@@ -47,6 +47,7 @@ Base.lock(::Any, ::AbstractStore)
 AbstractStores.supportsttl
 AbstractStores.supportslisting
 AbstractStores.isatomic
+checkstore
 AbstractStores.extensionloaded
 ```
 

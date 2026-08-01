@@ -4,8 +4,14 @@ using Test, Dates
 using AbstractStores
 using AbstractStores: AbstractStore, supportsttl, supportslisting, isatomic, sweep!, modify!
 
+# The pairs are load-bearing: a backend that folds case or accents (MySQL's
+# default collation does both), pads trailing spaces (MySQL's utf8mb4_bin), or
+# strips trailing dots (Win32 filenames) silently merges two distinct keys into
+# one entry — the exact bug class this suite exists to catch.
 const TRICKY_KEYS = ["a/b/c", "with space", "ünïcødé", "colon:sep", "dot.dot",
-                     "under_score", "dash-dash", "%percent", "plus+eq=", "~tilde"]
+                     "under_score", "dash-dash", "%percent", "plus+eq=", "~tilde",
+                     "case", "CASE", "cafe", "café",
+                     "trail", "trail.", "trail "]
 
 function AbstractStores.runstoretests(makestore, values::AbstractVector;
                        name::AbstractString="", concurrency::Bool=true,
@@ -163,6 +169,23 @@ function AbstractStores.runstoretests(makestore, values::AbstractVector;
                 @test empty!(store) === store
                 @test isempty(store)
                 @test length(store) == 0
+
+                # prefix matching is byte-exact, never case-folded — a backend
+                # matching case-insensitively (SQLite LIKE, MySQL's default
+                # collation) would list, and worse *empty!*, a sibling namespace.
+                # Gated on the case pair so a harness that had to drop it from
+                # `trickykeys` (e.g. Minio storing objects on a case-insensitive
+                # filesystem) skips this consistently.
+                if "case" in trickykeys && "CASE" in trickykeys
+                    put!(store, "Case/upper", v1)
+                    put!(store, "case/lower", v2)
+                    @test Set(keys(store; prefix="case/")) == Set(["case/lower"])
+                    @test Set(keys(store; prefix="Case/")) == Set(["Case/upper"])
+                    empty!(store; prefix="case/")
+                    @test haskey(store, "Case/upper")
+                    @test !haskey(store, "case/lower")
+                    empty!(store)
+                end
             end
         end
 
