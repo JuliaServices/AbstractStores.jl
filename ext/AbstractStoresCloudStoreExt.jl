@@ -44,7 +44,8 @@ function Base.get(store::ObjectStore, key::AbstractString, default)
     entry = readentry(store, key)
     entry === nothing && return default
     if isexpired(entry)
-        delete!(store, key)
+        # best-effort reclamation: reading must not require delete permission
+        try delete!(store, key) catch end
         return default
     end
     return entry.value

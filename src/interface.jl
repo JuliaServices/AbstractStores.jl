@@ -5,7 +5,10 @@
 
 Abstract supertype for simple key-value state stores holding values of type `T`.
 
-Keys are always `String`s; values are always of type `T` (`eltype(store)`).  The
+Keys are always `String`s; values are always of type `T` (`eltype(store)`).
+Any non-empty string is a key — backends must preserve case, unicode, and
+separators exactly — but the *empty* key is not portable (`FileStore` rejects
+it: it has no filename).  The
 interface deliberately mirrors `AbstractDict` where the semantics line up, but
 `AbstractStore` is *not* an `AbstractDict`: a store may live in another process,
 on another machine, or in a cloud bucket, where operations can fail, `length` can
@@ -155,6 +158,45 @@ counters) should check this trait rather than assuming.
 """
 isatomic(::AbstractStore) = false
 
+"""
+    checkstore(store; ttl=false, atomic=false, listing=false) -> store
+
+Assert that `store` provides the guarantees your code depends on, throwing a
+descriptive `ArgumentError` naming the missing trait otherwise.  Returns `store`,
+so it composes at construction sites.
+
+Call this **once, at configuration time** — when your library is handed a store
+— rather than hoping the right trait holds at first use.  It turns "this
+deployment is quietly broken" (single-use tokens that are not single-use, TTLs
+that never expire anything) into an immediate, explainable startup error.
+
+# Examples
+```julia
+# an OAuth server: authorization codes must be single-use and short-lived
+codes = checkstore(store; atomic=true, ttl=true)
+
+# a scheduler lease store
+leases = checkstore(store; atomic=true, ttl=true)
+```
+"""
+function checkstore(store::AbstractStore; ttl::Bool=false, atomic::Bool=false,
+                    listing::Bool=false)
+    ttl && !supportsttl(store) && throw(ArgumentError(
+        "$(typeof(store)) does not support expiry (`AbstractStores.supportsttl` is " *
+        "false), but this use requires `ttl` to work. Use a TTL-capable store " *
+        "(MemoryStore, FileStore with an envelope codec, SQLStore, RedisStore)."))
+    atomic && !isatomic(store) && throw(ArgumentError(
+        "$(typeof(store)) is not atomic (`AbstractStores.isatomic` is false): " *
+        "`modify!`/`pop!`/`get!` are subject to races, so single-use tokens, " *
+        "leases, and counters are unsafe on it. Use a store with a real " *
+        "compare-and-swap (MemoryStore within a process; SQLStore or RedisStore " *
+        "across processes)."))
+    listing && !supportslisting(store) && throw(ArgumentError(
+        "$(typeof(store)) cannot enumerate its keys (`AbstractStores.supportslisting` " *
+        "is false), but this use requires `keys`."))
+    return store
+end
+
 #-------------------------------------------------------------------------------
 # TTL handling
 #-------------------------------------------------------------------------------
@@ -296,6 +338,15 @@ counters are all defined in terms of it.  Backends should override it with a
 native atomic operation (a Redis `EVAL` script, a SQL `UPDATE ... RETURNING`
 inside a transaction, a conditional write with an ETag).
 
+!!! warning "Never mutate the value you were passed"
+    Because `new === old` means "no change", mutating the passed value in place
+    and returning it is **indistinguishable from returning it untouched** — the
+    write is skipped, and on a serializing backend your mutation is silently
+    lost (on `MemoryStore` it may appear to work, purely by reference aliasing).
+    When you change anything, return a *new* object: `copy(old)` first, or build
+    the replacement from scratch.  `f` may also run more than once on
+    compare-and-swap backends, so keep it free of side effects.
+
 !!! warning "Check [`isatomic`](@ref)"
     The fallback implementation is `lock(store) do; get; f; put!; end`, which is
     only as atomic as the store's `Base.lock(f, store)` method — by default, not
@@ -303,15 +354,21 @@ inside a transaction, a conditional write with an ETag).
     reports `isatomic(store) == false`, and this fallback is then subject to lost
     updates under concurrency.
 
+!!! note "A write replaces the expiry"
+    Writing a *changed* value stores it with the `ttl` you pass to this call —
+    and with no `ttl`, no expiry.  There is currently no way to say "keep the
+    key's remaining deadline"; compute it yourself if you need that.
+
 !!! note "`T === Nothing`"
     Because `nothing` signals deletion, a store whose `eltype` includes `Nothing`
     cannot write `nothing` through `modify!`.  Use `put!` for that case.
 
 # Examples
 ```julia
-# append to a bounded history list
+# append to a bounded history list — note the `copy`: returning the object you
+# were handed, mutated or not, means "no change"
 modify!(store, "history/\$job") do old
-    execs = old === nothing ? JobExecution[] : old
+    execs = old === nothing ? JobExecution[] : copy(old)
     pushfirst!(execs, execution)
     return length(execs) > 100 ? execs[1:100] : execs
 end

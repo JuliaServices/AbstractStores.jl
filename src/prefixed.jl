@@ -9,13 +9,23 @@ needs three kinds of state does not need three Redis connections or three
 directories, and an application embedding several such libraries can keep their
 keys from colliding.
 
-Every operation, including `keys`, `length`, `empty!`, and `sweep!`, is scoped to
-the prefix — `empty!` on a `PrefixedStore` will not touch a sibling's keys.  All
-traits are inherited from `parent`.
+Every operation except `sweep!` is scoped to the prefix — `empty!` on a
+`PrefixedStore` will not touch a sibling's keys, while `sweep!` reclaims expired
+entries across the whole parent (reclamation has no reason to stop at a
+namespace boundary).  All traits are inherited from `parent`.
 
-The two-argument form reuses the parent's `eltype`; the parameterized form lets a
-single heterogeneous parent (say, an `AbstractStore{Vector{UInt8}}`) be viewed at
-a narrower type where the codec supports it.
+The two-argument form reuses the parent's `eltype`.  The parameterized form
+narrows the view's type — but the *parent* still performs the decoding, so this
+only round-trips when the parent preserves types: `MemoryStore` (values held by
+reference) or any store using `SerializedCodec`.
+
+!!! warning "Typed views require a type-preserving parent"
+    `PrefixedStore{Job}(FileStore{Any}(dir; codec=JSONCodec()), "jobs/")` does
+    **not** give you `Job`s back — JSON is decoded at the parent's `eltype`
+    (`Any`), so values come back as `Dict{String,Any}`.  With a portable codec
+    like `JSONCodec`, give each kind of state its own concretely-typed store
+    (same backend, different directory/table/prefix) instead of typed views over
+    one `Any` store.
 
 # Examples
 ```julia

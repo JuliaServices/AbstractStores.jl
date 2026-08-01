@@ -56,12 +56,15 @@ pop!(codes, code, nothing)     # exactly one process wins
 struct RedisStore{T,C<:AbstractCodec,Client} <: AbstractStore{T}
     client::Client
     codec::C
+    # SHA of the CAS script once SCRIPT LOADed on this client; "" until then.
+    # A racing double-load is harmless (same script, same sha).
+    scriptsha::Base.RefValue{String}
 end
 
 function RedisStore{T}(client; codec::AbstractCodec=SerializedCodec()) where {T}
     extensionloaded(RedisStore) || throw(ArgumentError(
         "RedisStore requires Redis.jl: `using Redis` to load the AbstractStoresRedisExt extension."))
-    return RedisStore{T,typeof(codec),typeof(client)}(client, codec)
+    return RedisStore{T,typeof(codec),typeof(client)}(client, codec, Ref(""))
 end
 
 supportsttl(::RedisStore) = true

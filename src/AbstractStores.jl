@@ -33,7 +33,8 @@ plus derived operations `store[key]`, `store[key] = value`, `haskey`, `length`,
 
 Three traits tell a caller what a given backend actually guarantees:
 [`AbstractStores.supportsttl`](@ref), [`AbstractStores.supportslisting`](@ref),
-and [`AbstractStores.isatomic`](@ref).
+and [`AbstractStores.isatomic`](@ref) — and [`checkstore`](@ref) asserts the
+ones your code depends on, at configuration time.
 
 # Backends
 
@@ -67,7 +68,7 @@ using Dates, Serialization, Base64
 export AbstractStore, MemoryStore, FileStore, PrefixedStore,
        SQLStore, RedisStore, ObjectStore,
        SerializedCodec, RawCodec, JSONCodec,
-       modify!, sweep!
+       modify!, sweep!, checkstore
 
 include("interface.jl")
 include("codecs.jl")
@@ -101,8 +102,12 @@ code written against the interface will work with it.
 - `concurrency`: run the multi-task race tests.  Only meaningful when
   [`isatomic`](@ref) is `true`; skipped automatically otherwise.
 - `trickykeys`: the awkward keys to exercise — separators, spaces, unicode,
-  punctuation.  Narrow it only for a backend that genuinely cannot represent the
-  full set, and say why: a store quietly mangling keys is the bug this catches.
+  punctuation, case and accent pairs.  Narrow it only for a backend that
+  genuinely cannot represent the full set, and say why: a store quietly mangling
+  or *merging* keys is the bug this catches.  The `"case"`/`"CASE"` pair also
+  gates the byte-exact prefix tests; drop it only for a test harness that cannot
+  keep case-distinct keys apart (e.g. Minio persisting to a case-insensitive
+  filesystem), never for a real service.
 
 The suite adapts to the store's traits: TTL tests run only when
 [`supportsttl`](@ref) is `true` — and when it is `false`, it separately asserts
