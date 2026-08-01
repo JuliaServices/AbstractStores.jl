@@ -42,9 +42,19 @@ end
         # round-trip
         for key in ["plain", "a/b", "../../etc/passwd", ".", "..", ".hidden",
                     "ünïcødé", "%2F", "with space", "\0nul", "\r\n", "tab\t",
-                    "CASE", "MixedCase", "con", "COM1.txt", "console", "nul.a.b"]
+                    "CASE", "MixedCase", "con", "COM1.txt", "console", "nul.a.b",
+                    "trail.", "trail ", "a...", "..."]
             @test decodekey(encodekey(key)) == key
         end
+        # Win32 strips trailing dots (and spaces) from a path component, so a
+        # canonical name must never end in either
+        for key in ["a.", "..", "...", "con.", "dot.dot.", "sp. "]
+            name = encodekey(key)
+            @test !endswith(name, '.') && !endswith(name, ' ')
+        end
+        @test encodekey("a.") == "a%2E"
+        @test encodekey("..") == "%2E%2E"
+        @test decodekey("%2E.") === nothing    # the old spelling of ".." is no longer canonical
         # nothing escapes the directory, and no name is a dotfile
         for key in ["../x", "..", ".", "/abs", "a/../../b", ".hidden"]
             name = encodekey(key)
@@ -72,8 +82,9 @@ end
         # decode to the same key
         @test decodekey("%61") === nothing          # 'a' is safe, never escaped
         @test decodekey("%2f") === nothing          # lowercase hex is never emitted
-        @test decodekey("a%2E") === nothing         # '.' only escaped when leading
-        @test decodekey("%2E") == "."               # the leading-dot special case
+        @test decodekey("a%2Eb") === nothing        # '.' never escaped mid-name
+        @test decodekey("a%2E") == "a."             # ...but always escaped trailing
+        @test decodekey("%2E") == "."               # ...and leading
         @test decodekey("a b") === nothing          # raw unsafe byte: not our file
         @test decodekey("CASE") === nothing         # raw uppercase: not our file
         @test decodekey("con") === nothing          # reserved stem: we escape it
@@ -125,6 +136,12 @@ end
         @test_throws ArgumentError store["x"^300] = "too long"
         store["x"^200] = "fits"           # 200 chars encode to 200 bytes
         @test store["x"^200] == "fits"
+        # the budget leaves room for the temp-file adornment, so the boundary
+        # is a clean ArgumentError, never an ENAMETOOLONG at write time
+        limit = AbstractStores.MAX_FILENAME_BYTES - AbstractStores.TMP_NAME_OVERHEAD
+        store["x"^limit] = "exactly"
+        @test store["x"^limit] == "exactly"
+        @test_throws ArgumentError store["x"^(limit + 1)] = "one too many"
     end
 
     @testset "the empty key has no filename" begin
@@ -306,9 +323,9 @@ end
     @test placeholder(POSTGRES, 3) == "\$3"
     @test placeholders(SQLITE, 3) == "?, ?, ?"
     @test placeholders(POSTGRES, 3) == "\$1, \$2, \$3"
-    # binary collation: MySQL's default folds case and accents, which would make
-    # "Key" and "key" the same primary key
-    @test occursin("utf8mb4_bin", MYSQL.keytype)
+    # VARBINARY: every utf8mb4 collation folds something — case and accents by
+    # default, trailing spaces even under utf8mb4_bin (PAD SPACE)
+    @test MYSQL.keytype == "VARBINARY(512)"
     @test MYSQL.valuetype == "MEDIUMTEXT"
 
     @test likeprefix("") == "%"

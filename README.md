@@ -117,8 +117,11 @@ built on one atomic primitive:
 | `pop!(store, key[, default])` | atomic consume — single-use tokens, work claims |
 | `get!(store, key, default)` | atomic get-or-create — first writer wins, leases |
 
-Keys are always non-empty `String`s, preserved byte-exactly — case, unicode,
-and separators never fold or collide, on any backend. Values are always
+Keys are non-empty `String`s. Whatever keys a backend accepts it preserves
+byte-exactly — case, accents, separators, and trailing characters never fold or
+collide, on any backend — though per-backend limits on what is *accepted* exist
+and are documented with each backend (MySQL: 512 bytes; `FileStore`: 228
+encoded bytes; `ObjectStore`: no space or `%` yet). Values are always
 `eltype(store)`. `AbstractStore` is deliberately **not** an `AbstractDict`: a
 store may live on another machine, where `length` is expensive, iteration is
 not free, and operations can fail.
@@ -181,9 +184,10 @@ Loading the relevant package activates an extension providing the rest:
 3. Optimistic concurrency: each row carries a random token and every write is
    conditional on the token the reader saw, with the write and its verification
    sharing a short transaction. No `SELECT ... FOR UPDATE`, no dialect-specific
-   row-locking semantics. The MySQL key column carries an explicit binary
-   collation — MySQL's default would fold case and accents, making `"Key"` and
-   `"key"` the same row — and prefix listing is byte-exact on all three dialects.
+   row-locking semantics. The MySQL key column is `VARBINARY` — every utf8mb4
+   collation folds *something*: case and accents by default, trailing spaces
+   even under `utf8mb4_bin` — and prefix matching carries a byte-exact guard on
+   all three dialects.
 4. A compare-and-swap Lua script (loaded once, invoked by SHA), comparing a
    token rather than the value, so an A→B→A sequence is correctly detected as a
    conflict.
@@ -193,9 +197,11 @@ Keep it pure.
 
 Every backend is held to the same conformance suite against a real service —
 SQLite in-process, Postgres/MySQL/Redis in throwaway containers via
-[Harbor.jl](https://github.com/JuliaServices/Harbor.jl), and object storage
-against a local Minio. See [`test/services.jl`](test/services.jl); anything whose
-service is unavailable skips loudly rather than silently.
+[Harbor.jl](https://github.com/JuliaServices/Harbor.jl) (see
+[`test/services.jl`](test/services.jl)), and object storage against a local
+Minio via CloudBase's own CloudTest harness, no Docker needed (see
+[`test/backends.jl`](test/backends.jl)). Anything whose service is unavailable
+skips loudly rather than silently.
 
 ## Codecs
 
@@ -246,9 +252,12 @@ AbstractStores.runstoretests(() -> MyStore{String}(), ["a", "b", "c"])
 It adapts to your traits (TTL tests only when you support TTL; concurrency tests
 only when you claim atomicity) and separately checks that a store *without* TTL
 support rejects a `ttl` rather than ignoring it. Every backend in this package
-passes it — including the awkward keys: case pairs, accent pairs, separators,
-spaces, and path-traversal shapes, because a store quietly mangling or merging
-keys is exactly the bug the suite exists to catch.
+passes it — including the awkward keys: case pairs, accent pairs, trailing dots
+and spaces, separators, and path-traversal shapes, because a store quietly
+mangling or *merging* keys is exactly the bug the suite exists to catch. (The
+`ObjectStore` harness excludes only what its own tooling cannot represent: keys
+CloudBase cannot transmit yet, and the case pair when the local Minio sits on a
+case-insensitive disk.)
 
 ## Who is using it
 
@@ -285,7 +294,7 @@ Docker is required for the Postgres, MySQL, and Redis backends; without it those
 testsets skip. Image refs are overridable via `ABSTRACTSTORES_POSTGRES_IMAGE`,
 `ABSTRACTSTORES_MYSQL_IMAGE`, and `ABSTRACTSTORES_REDIS_IMAGE`.
 
-All five backends run the same conformance suite: SQLite, Postgres, and MySQL
+Every backend runs the same conformance suite; SQLite, Postgres, and MySQL
 each execute it three times (over `String`, `Int`, and a struct via `JSONCodec`),
 so the three SQL dialects are held to an identical contract.
 
@@ -297,7 +306,8 @@ JuliaServices/Redis.jl, and CloudBase's HTTP 2.x); `test/backends.jl` loads thos
 opportunistically and skips loudly without them.
 
 To exercise every backend, run the suite from an environment that has them
-`develop`ed:
+`develop`ed (start Julia with `-t4` so the concurrency testsets get real
+parallelism):
 
 ```julia
 using Pkg

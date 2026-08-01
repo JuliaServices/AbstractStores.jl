@@ -6,9 +6,12 @@
 Abstract supertype for simple key-value state stores holding values of type `T`.
 
 Keys are always `String`s; values are always of type `T` (`eltype(store)`).
-Any non-empty string is a key — backends must preserve case, unicode, and
-separators exactly — but the *empty* key is not portable (`FileStore` rejects
-it: it has no filename).  The
+Whatever keys a backend accepts it must preserve *exactly* — case, accents,
+separators, and trailing characters never fold or collide.  Per-backend limits
+on what is accepted do exist and are documented with each backend: the empty
+key is not portable (`FileStore` rejects it — it has no filename), `FileStore`
+bounds the encoded key length, MySQL bounds keys at 512 bytes, and `ObjectStore`
+currently rejects a space or `%`.  The
 interface deliberately mirrors `AbstractDict` where the semantics line up, but
 `AbstractStore` is *not* an `AbstractDict`: a store may live in another process,
 on another machine, or in a cloud bucket, where operations can fail, `length` can
@@ -193,7 +196,8 @@ function checkstore(store::AbstractStore; ttl::Bool=false, atomic::Bool=false,
         "across processes)."))
     listing && !supportslisting(store) && throw(ArgumentError(
         "$(typeof(store)) cannot enumerate its keys (`AbstractStores.supportslisting` " *
-        "is false), but this use requires `keys`."))
+        "is false), but this use requires `keys`. Use a listing-capable store " *
+        "(every backend in AbstractStores lists), or track your keys explicitly."))
     return store
 end
 

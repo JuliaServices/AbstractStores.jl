@@ -133,15 +133,16 @@ function Base.empty!(store::SQLStore; prefix::AbstractString="")
     if isempty(prefix)
         exec!(store, "DELETE FROM $(store.table)")
     else
-        # Deletes must be byte-exact too, and must include expired rows the
-        # `keys` query would hide — so select candidates without the expiry
-        # filter, then delete each by primary key.
-        ks = fetchall(row -> String(row.store_key), store,
-            "SELECT store_key FROM $(store.table) WHERE store_key LIKE $(placeholder(d, 1)) ESCAPE '!'",
-            (likeprefix(prefix),))
-        for k in ks
-            startswith(k, prefix) && delete!(store, k)
-        end
+        # One statement, so the delete stays atomic. The LIKE is the
+        # index-friendly prefilter; the substr equality is the byte-exact guard
+        # SQLite's case-folding LIKE needs. substr counts characters on TEXT
+        # columns but bytes on MySQL's VARBINARY, hence the dialect-aware
+        # length. No expiry filter: `empty!` reclaims expired rows too.
+        n = d.name === :MySQL ? ncodeunits(prefix) : length(prefix)
+        exec!(store,
+            "DELETE FROM $(store.table) WHERE store_key LIKE $(placeholder(d, 1)) ESCAPE '!' " *
+            "AND substr(store_key, 1, $(placeholder(d, 2))) = $(placeholder(d, 3))",
+            (likeprefix(prefix), n, String(prefix)))
     end
     return store
 end

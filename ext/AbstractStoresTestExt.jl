@@ -4,12 +4,14 @@ using Test, Dates
 using AbstractStores
 using AbstractStores: AbstractStore, supportsttl, supportslisting, isatomic, sweep!, modify!
 
-# The case pair ("case"/"CASE") and accent pair ("cafe"/"café") are load-bearing:
-# a backend whose key comparison folds case or accents (MySQL's default
-# collation does both) silently merges them into one entry.
+# The pairs are load-bearing: a backend that folds case or accents (MySQL's
+# default collation does both), pads trailing spaces (MySQL's utf8mb4_bin), or
+# strips trailing dots (Win32 filenames) silently merges two distinct keys into
+# one entry — the exact bug class this suite exists to catch.
 const TRICKY_KEYS = ["a/b/c", "with space", "ünïcødé", "colon:sep", "dot.dot",
                      "under_score", "dash-dash", "%percent", "plus+eq=", "~tilde",
-                     "case", "CASE", "cafe", "café"]
+                     "case", "CASE", "cafe", "café",
+                     "trail", "trail.", "trail "]
 
 function AbstractStores.runstoretests(makestore, values::AbstractVector;
                        name::AbstractString="", concurrency::Bool=true,

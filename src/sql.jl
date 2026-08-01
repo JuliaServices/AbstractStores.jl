@@ -21,14 +21,14 @@ end
 
 "Dialect for SQLite.jl connections. See [`SQLDialect`](@ref)."
 const SQLITE = SQLDialect(:SQLite, false, "TEXT", "TEXT")
-# The explicit binary collation is load-bearing: MySQL's default utf8mb4
-# collation is case- and accent-insensitive, under which "Key" and "key" would be
-# the *same primary key* and silently upsert over each other. MEDIUMTEXT rather
-# than TEXT because TEXT caps values at 64KiB (~48KiB of payload after base64).
+# VARBINARY is the only key type that compares byte-exactly on MySQL *and*
+# MariaDB: the default utf8mb4 collation folds case and accents ("Key" ==
+# "key"), and even utf8mb4_bin is a PAD SPACE collation under which "key" and
+# "key " are the same primary key (the NO PAD utf8mb4_0900_bin exists only on
+# MySQL 8+). MEDIUMTEXT rather than TEXT for the value because TEXT caps values
+# at 64KiB (~48KiB of payload after base64).
 "Dialect for MySQL.jl / MariaDB connections. See [`SQLDialect`](@ref)."
-const MYSQL = SQLDialect(:MySQL, false,
-                         "VARCHAR(512) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin",
-                         "MEDIUMTEXT")
+const MYSQL = SQLDialect(:MySQL, false, "VARBINARY(512)", "MEDIUMTEXT")
 "Dialect for Postgres.jl / LibPQ.jl connections. See [`SQLDialect`](@ref)."
 const POSTGRES = SQLDialect(:Postgres, true, "TEXT", "TEXT")
 
@@ -66,7 +66,7 @@ between them.  One implementation covers every SQL backend.
 # Schema
 
     CREATE TABLE <table> (
-        store_key   TEXT PRIMARY KEY,   -- VARCHAR(512) ... COLLATE utf8mb4_bin on MySQL
+        store_key   TEXT PRIMARY KEY,   -- VARBINARY(512) on MySQL
         store_value TEXT NOT NULL,      -- base64 of the codec's bytes; MEDIUMTEXT on MySQL
         expires_at  BIGINT,             -- unix milliseconds; NULL means never
         token       BIGINT NOT NULL     -- compare-and-swap token
@@ -78,10 +78,11 @@ buys identical behavior on every driver with no binary-binding quirks.  Expiry i
 unix milliseconds compared against a bound parameter, so no server-side time or
 timezone functions are involved.
 
-Keys compare byte-exactly on every dialect: MySQL's key column carries an
-explicit binary collation (its default collation would fold case and accents,
-making `"Key"` and `"key"` the same row), and prefix listing filters
-client-side where a dialect's `LIKE` is not case-sensitive (SQLite).
+Keys compare byte-exactly on every dialect: MySQL's key column is `VARBINARY`
+(every utf8mb4 collation would fold *something* — case and accents by default,
+trailing spaces even under `utf8mb4_bin`), and prefix matching carries a
+byte-exact guard where a dialect's `LIKE` is not case-sensitive (SQLite).  One
+consequence: MySQL limits keys to 512 bytes; the other dialects are unbounded.
 
 `table` is interpolated into SQL and is therefore restricted to alphanumerics and
 underscores.  Everything else — keys, values, expiry — is bound as a parameter.

@@ -166,7 +166,7 @@ end
             sql_conformance(conn, "MySQL")
             store = SQLStore{String}(conn; table="dialect")
             @test store.dialect === AbstractStores.MYSQL
-            @test occursin("utf8mb4_bin", store.dialect.keytype)   # binary collation is load-bearing
+            @test store.dialect.keytype == "VARBINARY(512)"   # byte-exact keys are load-bearing
         end
     else
         @test_skip "MySQL backend (docker or MySQL.jl unavailable)"
@@ -227,6 +227,16 @@ end
                 @test s["k"] == "A!"
             end
 
+            @testset "modify! survives SCRIPT FLUSH (EVALSHA -> EVAL fallback)" begin
+                s = fresh(String)
+                put!(s, "k", "v")
+                modify!(old -> old * "1", s, "k")            # loads the script
+                Redis.execute(client, Redis.Commands.Command{String}(
+                    "*2\r\n\$6\r\nSCRIPT\r\n\$5\r\nFLUSH\r\n"))
+                @test modify!(old -> old * "2", s, "k") == "v12"   # NOSCRIPT -> EVAL
+                @test modify!(old -> old * "3", s, "k") == "v123"  # sha reloaded
+            end
+
             @testset "concurrent pop! has exactly one winner" begin
                 s = fresh(String)
                 put!(s, "prize", "gold")
@@ -266,7 +276,7 @@ end
         # canonicalize the escape -> 403). See `?AbstractStores.checkobjectkey`.
         urlsafe = ["a/b/c", "dot.dot", "under_score", "dash-dash", "~tilde",
                    "ünïcødé", "plus+eq=", "amp&amp", "hash#hash", "colon:sep",
-                   "cafe", "café"]
+                   "cafe", "café", "trail", "trail."]
         # The case pair only when the *local* filesystem distinguishes case:
         # Minio stores each object as a directory path, so on APFS/NTFS
         # "case/x" silently lands inside an existing "Case" — a harness

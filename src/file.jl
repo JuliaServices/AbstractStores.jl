@@ -21,6 +21,9 @@ const WINDOWS_RESERVED = Set(["con", "prn", "aux", "nul",
                               ("com$i" for i in 1:9)..., ("lpt$i" for i in 1:9)...])
 
 const MAX_FILENAME_BYTES = 255
+# Widest adornment `put!` wraps around a name for its temp file:
+# ".tmp-" + name + "-" + pid (≤10 digits) + "-" + rand(UInt32) (≤10 digits).
+const TMP_NAME_OVERHEAD = 27
 
 """
     AbstractStores.encodekey(key) -> String
@@ -51,6 +54,9 @@ function encodekey(key::AbstractString)
     elseif first(split(name, '.'; limit=2)) in WINDOWS_RESERVED
         name = string('%', uppercase(string(UInt8(name[1]); base=16, pad=2)), name[2:end])
     end
+    # Win32 strips trailing dots from a path component, so "a" and "a." would
+    # name the same file; a trailing space is already escaped above.
+    endswith(name, '.') && (name = name[1:end-1] * "%2E")
     return name
 end
 
@@ -63,6 +69,7 @@ through `encodekey` — so listing skips files the store did not write, and no t
 listable names can decode to the same key.
 """
 function decodekey(name::AbstractString)
+    isempty(name) && return nothing     # "" round-trips, but is not a legal key
     bytes = codeunits(name)
     io = IOBuffer()
     i = 1
@@ -99,8 +106,9 @@ file called `%2E.%2F..%2Fetc%2Fpasswd` inside `dir`.  Uppercase and non-ASCII
 bytes are escaped too, so keys differing only in case or Unicode normalization
 stay distinct even on the case-insensitive filesystems that are the default on
 macOS and Windows, and Windows-reserved device names (`con`, `nul`, …) are
-handled.  Keys whose encoded form exceeds $MAX_FILENAME_BYTES bytes are
-rejected, as is the empty key (it has no filename).
+handled.  Keys whose encoded form exceeds $(MAX_FILENAME_BYTES - TMP_NAME_OVERHEAD)
+bytes are rejected (a $MAX_FILENAME_BYTES-byte filename limit, less the temp-file
+adornment), as is the empty key (it has no filename).
 
 Files are created `0o600` and the directory `0o700` by default, on the assumption
 that anything worth persisting through this interface (tokens, credentials,
@@ -167,9 +175,11 @@ function keypath(store::FileStore, key::AbstractString)
     isempty(key) && throw(ArgumentError(
         "FileStore cannot store the empty key \"\": it has no filename"))
     name = encodekey(key)
-    sizeof(name) <= MAX_FILENAME_BYTES || throw(ArgumentError(
+    # The budget covers the temp-file adornment too, so a key accepted here
+    # cannot fail later with an opaque ENAMETOOLONG at write time.
+    sizeof(name) <= MAX_FILENAME_BYTES - TMP_NAME_OVERHEAD || throw(ArgumentError(
         "key encodes to a $(sizeof(name))-byte filename, exceeding the " *
-        "$MAX_FILENAME_BYTES-byte limit: $(repr(String(key)))"))
+        "$(MAX_FILENAME_BYTES - TMP_NAME_OVERHEAD)-byte limit: $(repr(String(key)))"))
     return joinpath(store.dir, name)
 end
 
@@ -215,10 +225,14 @@ function Base.put!(store::FileStore{T}, key::AbstractString, value; ttl=nothing)
                 write(io, bytes)
             end
             store.permissions === nothing || chmod(tmp, Int(store.permissions))
-            # `Base.Filesystem.rename`, not `mv(force=true)`: uv rename replaces
-            # an existing destination atomically, whereas `mv` on Julia < 1.12
-            # deletes the destination first — a crash in between would lose the
-            # old value, and a concurrent reader would see the key vanish.
+            # `Base.Filesystem.rename`, not `mv(force=true)`: mv on Julia < 1.12
+            # deletes the destination before renaming, so a crash in between
+            # loses the old value and a concurrent reader sees the key vanish.
+            # rename replaces atomically on every supported Julia; the caveats
+            # are that 1.10/1.11's rename falls back to a copy+delete if the
+            # rename syscall itself fails (same-directory renames don't), and
+            # on Windows a destination held open by another process can raise a
+            # sharing violation where mv would have deleted it first.
             Base.Filesystem.rename(tmp, path)
         catch
             rm(tmp; force=true)
@@ -265,6 +279,20 @@ function Base.keys(store::FileStore; prefix::AbstractString="")
         push!(result, key)
     end
     return result
+end
+
+# Override the keys()-based fallback: `empty!` must reclaim expired entries
+# too, and the envelope codec's `keys` both hides them and reads every file.
+function Base.empty!(store::FileStore; prefix::AbstractString="")
+    names = @lock store.lock readdir(store.dir; sort=false)
+    for name in names
+        startswith(name, '.') && continue
+        key = decodekey(name)
+        key === nothing && continue
+        startswith(key, prefix) || continue
+        @lock store.lock rm(joinpath(store.dir, name); force=true)
+    end
+    return store
 end
 
 function sweep!(store::FileStore)

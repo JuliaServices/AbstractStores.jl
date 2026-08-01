@@ -80,7 +80,8 @@ end
 # Redis expires keys itself; nothing to reclaim.
 AbstractStores.sweep!(::RedisStore) = 0
 
-# Run the CAS script by SHA, loading it at most once per client; if the server
+# Run the CAS script by SHA, loading it at most once per *store* (stores
+# sharing a client each load it once; the load is idempotent). If the server
 # has lost it (SCRIPT FLUSH, restart), fall back to a plain EVAL for this call
 # and reload on the next.
 function evalcas(store::RedisStore, args::AbstractString...)
