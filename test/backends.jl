@@ -166,7 +166,7 @@ end
             sql_conformance(conn, "MySQL")
             store = SQLStore{String}(conn; table="dialect")
             @test store.dialect === AbstractStores.MYSQL
-            @test store.dialect.keytype == "VARCHAR(512)"
+            @test occursin("utf8mb4_bin", store.dialect.keytype)   # binary collation is load-bearing
         end
     else
         @test_skip "MySQL backend (docker or MySQL.jl unavailable)"
