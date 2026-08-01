@@ -305,7 +305,7 @@ Pkg.activate(temp=true)
 Pkg.develop([PackageSpec(path=p) for p in
     ["/path/to/AbstractStores", "/path/to/Postgres", "/path/to/Redis",
      "/path/to/CloudStore", "/path/to/CloudBase", "/path/to/HTTP", "/path/to/Reseau",
-     "/path/to/StructUtils"]])   # Postgres.jl currently tracks StructUtils#main
+     "/path/to/StructUtils"]])   # Postgres.jl currently needs an unreleased StructUtils
 Pkg.add(["Test", "JSON", "DBInterface", "SQLite", "MySQL", "Harbor", "Sockets", "Dates"])
 include("/path/to/AbstractStores/test/runtests.jl")
 ```
