@@ -36,15 +36,21 @@ detected as a conflict.
     Redis database.  Wrap the store in a [`PrefixedStore`](@ref) (or point the
     client at a dedicated `db` index) unless that is what you want.
 
-!!! note "Requires Redis.jl"
-    The methods live in a package extension; `using Redis` to enable them.  Note
-    that this targets the JuliaServices `Redis.jl`
-    (UUID `ea172dcb-e524-4936-bdf0-c2e0946dc87a`), which is a different package
-    from the `Redis.jl` registered in General under `0cf705f9-…`.
+!!! note "Requires the JuliaServices Redis.jl (not yet registered)"
+    The methods live in `ext/AbstractStoresRedisExt.jl`, which targets
+    [JuliaServices/Redis.jl](https://github.com/JuliaServices/Redis.jl) — a
+    different package from any `Redis.jl` in General.  Because that package is
+    not registered yet, the extension is *not declared* in `Project.toml` (a
+    registered package cannot reference an unregistered weakdep); it will be
+    declared the moment Redis.jl is registered.  Until then:
+    `Pkg.develop` Redis.jl, then
+    `include(joinpath(pkgdir(AbstractStores), "ext", "AbstractStoresRedisExt.jl"))`.
 
 # Examples
 ```julia
 using AbstractStores, Redis
+# until Redis.jl is registered, load the extension by hand:
+include(joinpath(pkgdir(AbstractStores), "ext", "AbstractStoresRedisExt.jl"))
 
 client = Redis.connect("localhost", 6379)
 codes = PrefixedStore(RedisStore{String}(client), "oauth:code:")
@@ -63,7 +69,11 @@ end
 
 function RedisStore{T}(client; codec::AbstractCodec=SerializedCodec()) where {T}
     extensionloaded(RedisStore) || throw(ArgumentError(
-        "RedisStore requires Redis.jl: `using Redis` to load the AbstractStoresRedisExt extension."))
+        "RedisStore requires the JuliaServices Redis.jl " *
+        "(https://github.com/JuliaServices/Redis.jl), which is not registered in " *
+        "General yet, so its package extension is not declared. Until it is: " *
+        "`Pkg.develop` Redis.jl, `using Redis`, then " *
+        "`include(joinpath(pkgdir(AbstractStores), \"ext\", \"AbstractStoresRedisExt.jl\"))`."))
     return RedisStore{T,typeof(codec),typeof(client)}(client, codec, Ref(""))
 end
 

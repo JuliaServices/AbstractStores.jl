@@ -8,18 +8,23 @@ Base64 = "2a0f44e3-6c83-55bd-87e4-b1978d98bd5f"
 Dates = "ade2ca70-3891-5945-98fb-dc099432e06a"
 Serialization = "9e88b42a-f829-5b0c-bbe9-9e923198166b"
 
+# The Redis backend (ext/AbstractStoresRedisExt.jl) is deliberately NOT
+# declared here yet: it targets JuliaServices/Redis.jl, which is not registered
+# in General, and a registered package cannot reference an unregistered weakdep
+# (Registrator rejects it as `dependency_not_found`). The extension entry —
+# `Redis = "ea172dcb-e524-4936-bdf0-c2e0946dc87a"` plus
+# `AbstractStoresRedisExt = "Redis"` — returns the moment Redis.jl is
+# registered; until then test/backends.jl loads the extension file directly.
 [weakdeps]
 CloudStore = "3365d9ee-d53b-4a56-812d-5344d5b716d7"
 DBInterface = "a10d1c49-ce27-4219-8d33-6db1a4562965"
 JSON = "682c06a0-de6a-54ab-a142-c8b1cf79cde6"
-Redis = "ea172dcb-e524-4936-bdf0-c2e0946dc87a"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
 [extensions]
 AbstractStoresCloudStoreExt = "CloudStore"
 AbstractStoresDBInterfaceExt = "DBInterface"
 AbstractStoresJSONExt = "JSON"
-AbstractStoresRedisExt = "Redis"
 AbstractStoresTestExt = "Test"
 
 [compat]
@@ -30,7 +35,6 @@ Dates = "1"
 Harbor = "1"
 JSON = "1"
 MySQL = "1.5"
-Redis = "1"
 SQLite = "1.7"
 Serialization = "1"
 Test = "1"

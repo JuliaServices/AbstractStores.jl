@@ -45,10 +45,12 @@ an extension providing more:
 | `using ...` | store |
 |:---|:---|
 | `JSON` | [`JSONCodec`](@ref) for portable on-disk values |
-| `Redis` | `RedisStore` |
 | `DBInterface` + SQLite/MySQL/Postgres | `SQLStore` |
 | `CloudStore` | `ObjectStore` (S3, Azure Blobs, GCS) |
 | `Test` | [`AbstractStores.runstoretests`](@ref), the conformance suite |
+
+`RedisStore` is implemented and tested too, but its extension awaits the
+registration of JuliaServices/Redis.jl — see `?RedisStore`.
 
 # Implementing a store
 

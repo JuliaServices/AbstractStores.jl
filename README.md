@@ -169,7 +169,7 @@ Loading the relevant package activates an extension providing the rest:
 | *(built in)* | `MemoryStore` | ✔ | ✔ | ✔ |
 | *(built in)* | `FileStore` — one file per key | ✔¹ | ✔ | ✖² |
 | `DBInterface` + SQLite/MySQL/Postgres | `SQLStore` | ✔ | ✔ | ✔³ |
-| `Redis` | `RedisStore` | ✔ | ✔ | ✔⁴ |
+| `Redis`⁵ | `RedisStore` | ✔ | ✔ | ✔⁴ |
 | `CloudStore` | `ObjectStore` — S3, Azure Blobs, GCS | ✔¹ | ✔ | ✖ |
 | `JSON` | `JSONCodec` | | | |
 | `Test` | `AbstractStores.runstoretests`, the conformance suite | | | |
@@ -191,6 +191,12 @@ Loading the relevant package activates an extension providing the rest:
 4. A compare-and-swap Lua script (loaded once, invoked by SHA), comparing a
    token rather than the value, so an A→B→A sequence is correctly detected as a
    conflict.
+5. The Redis backend targets [JuliaServices/Redis.jl](https://github.com/JuliaServices/Redis.jl),
+   which is not registered in General yet — and a registered package cannot
+   declare an unregistered weakdep, so the extension is not in `Project.toml`
+   until Redis.jl registers. It is implemented and held to the full conformance
+   suite (the tests load the extension file directly); see `?RedisStore` for
+   how to use it today.
 
 For 3 and 4: `f` may run more than once, which is inherent to compare-and-swap.
 Keep it pure.
@@ -332,9 +338,10 @@ include("/path/to/AbstractStores/test/runtests.jl")
   `ObjectStore` rejects those up front instead of surfacing an opaque HTTP error.
   Everything else — nested `a/b/c`, unicode, `+`, `&`, `#` — works, and the other
   backends handle arbitrary keys.
-- **Two different `Redis.jl`s.** The `Redis` extension targets the JuliaServices
-  package (UUID `ea172dcb-…`), not the `Redis.jl` registered in General under
-  `0cf705f9-…`.
+- **Two different `Redis.jl`s.** The Redis extension targets the JuliaServices
+  package (UUID `ea172dcb-…`), not any `Redis.jl` in General — and it stays
+  undeclared in `Project.toml` until that package is registered (see the
+  backends table).
 - Backend *types* (`SQLStore`, `RedisStore`, `ObjectStore`) are declared in the
   core package while their *methods* live in extensions, because a package
   extension cannot add names to its parent's namespace. Constructing one without

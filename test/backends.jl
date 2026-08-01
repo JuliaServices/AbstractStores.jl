@@ -33,6 +33,12 @@ const HAS_POSTGRES = available(:Postgres)
 const HAS_REDIS = available(:Redis)
 const HAS_CLOUD = available(:CloudStore) && available(:CloudBase)
 
+# The Redis extension is not declared in Project.toml until JuliaServices'
+# Redis.jl is itself registered in General (a registration cannot reference an
+# unregistered weakdep), so `using Redis` alone will not activate it — load the
+# extension module directly instead.
+HAS_REDIS && include(joinpath(dirname(@__DIR__), "ext", "AbstractStoresRedisExt.jl"))
+
 include("services.jl")
 
 const DOCKER = docker_available()
