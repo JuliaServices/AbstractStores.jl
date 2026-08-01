@@ -265,7 +265,18 @@ end
         # a space (CloudBase never escapes it -> 400) and '%' (its signing does not
         # canonicalize the escape -> 403). See `?AbstractStores.checkobjectkey`.
         urlsafe = ["a/b/c", "dot.dot", "under_score", "dash-dash", "~tilde",
-                   "ünïcødé", "plus+eq=", "amp&amp", "hash#hash", "colon:sep"]
+                   "ünïcødé", "plus+eq=", "amp&amp", "hash#hash", "colon:sep",
+                   "cafe", "café"]
+        # The case pair only when the *local* filesystem distinguishes case:
+        # Minio stores each object as a directory path, so on APFS/NTFS
+        # "case/x" silently lands inside an existing "Case" — a harness
+        # artifact, not S3 behavior (real object stores are byte-exact; the
+        # Linux CI run keeps the pair covered).
+        if (d = mktempdir(); touch(joinpath(d, "a")); !isfile(joinpath(d, "A")))
+            append!(urlsafe, ["case", "CASE"])
+        else
+            @warn "case-insensitive filesystem: skipping the case-pair keys for the Minio-backed ObjectStore tests"
+        end
 
         AbstractStores.runstoretests(["a", "b", "c"]; name="ObjectStore{String}",
                                      trickykeys=urlsafe) do

@@ -4,8 +4,12 @@ using Test, Dates
 using AbstractStores
 using AbstractStores: AbstractStore, supportsttl, supportslisting, isatomic, sweep!, modify!
 
+# The case pair ("case"/"CASE") and accent pair ("cafe"/"café") are load-bearing:
+# a backend whose key comparison folds case or accents (MySQL's default
+# collation does both) silently merges them into one entry.
 const TRICKY_KEYS = ["a/b/c", "with space", "ünïcødé", "colon:sep", "dot.dot",
-                     "under_score", "dash-dash", "%percent", "plus+eq=", "~tilde"]
+                     "under_score", "dash-dash", "%percent", "plus+eq=", "~tilde",
+                     "case", "CASE", "cafe", "café"]
 
 function AbstractStores.runstoretests(makestore, values::AbstractVector;
                        name::AbstractString="", concurrency::Bool=true,
@@ -163,6 +167,23 @@ function AbstractStores.runstoretests(makestore, values::AbstractVector;
                 @test empty!(store) === store
                 @test isempty(store)
                 @test length(store) == 0
+
+                # prefix matching is byte-exact, never case-folded — a backend
+                # matching case-insensitively (SQLite LIKE, MySQL's default
+                # collation) would list, and worse *empty!*, a sibling namespace.
+                # Gated on the case pair so a harness that had to drop it from
+                # `trickykeys` (e.g. Minio storing objects on a case-insensitive
+                # filesystem) skips this consistently.
+                if "case" in trickykeys && "CASE" in trickykeys
+                    put!(store, "Case/upper", v1)
+                    put!(store, "case/lower", v2)
+                    @test Set(keys(store; prefix="case/")) == Set(["case/lower"])
+                    @test Set(keys(store; prefix="Case/")) == Set(["Case/upper"])
+                    empty!(store; prefix="case/")
+                    @test haskey(store, "Case/upper")
+                    @test !haskey(store, "case/lower")
+                    empty!(store)
+                end
             end
         end
 

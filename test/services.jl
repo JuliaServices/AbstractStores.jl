@@ -122,8 +122,11 @@ function with_mysql(f::Function)
             wait_timeout=180.0,
             container_logs_on_error=true) do _
         conn = retry_connect(; timeout=180) do
+            # TLS off: it buys nothing against a throwaway localhost container,
+            # and libmariadb's SSL layer has crashed (SIGABRT in SSL_write)
+            # under Julia's threaded task migration on macOS.
             DBInterface.connect(MySQL.Connection, "127.0.0.1", MY_USER, MY_PASSWORD;
-                                db=MY_DB, port=port)
+                                db=MY_DB, port=port, ssl_mode=MySQL.API.SSL_MODE_DISABLED)
         end
         try
             return f(conn)
