@@ -314,8 +314,13 @@ end
 
     # pop! is modify! with a discard
     store["p"] = 9
-    @test pop!(store, "p", nothing) == 9
+    @test @inferred(pop!(store, "p", 0)) == 9
     @test pop!(store, "p", :gone) === :gone
+
+    # get! converts new values to the store element type and returns that type.
+    @test @inferred(get!(store, "converted", UInt8(3))) === 3
+    @test @inferred(get!(() -> UInt8(4), store, "generated")) === 4
+    @test_throws InexactError get!(store, "invalid", 1.5)
 end
 
 @testset "SQL helpers" begin
