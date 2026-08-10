@@ -465,13 +465,14 @@ for a given key, which is what makes it the right operation for OAuth
 authorization codes, one-time tokens, and work-queue claims — *provided*
 [`isatomic`](@ref)`(store)` is `true`.
 """
-function Base.pop!(store::AbstractStore, key::AbstractString, default)
-    taken = Ref{Any}(NOTFOUND)
+function Base.pop!(store::AbstractStore{T}, key::AbstractString, default) where {T}
+    taken = Ref{Union{NotFound,T}}(NOTFOUND)
     modify!(store, key) do old
         taken[] = old === nothing ? NOTFOUND : old
         return nothing
     end
-    return taken[] === NOTFOUND ? default : taken[]
+    value = taken[]
+    return value === NOTFOUND ? default : value::T
 end
 
 function Base.pop!(store::AbstractStore, key::AbstractString)
@@ -498,13 +499,14 @@ to its expiry — which is what makes this usable for leases:
 get!(leases, "nightly-report", myid; ttl=Dates.Minute(5)) == myid
 ```
 """
-Base.get!(store::AbstractStore, key::AbstractString, default; ttl=nothing) =
-    get!(() -> default, store, key; ttl)
+Base.get!(store::AbstractStore{T}, key::AbstractString, default; ttl=nothing) where {T} =
+    get!(() -> convert(T, default), store, key; ttl)
 
-function Base.get!(f, store::AbstractStore, key::AbstractString; ttl=nothing)
-    return modify!(store, key; ttl) do old
-        old === nothing ? f() : old
+function Base.get!(f, store::AbstractStore{T}, key::AbstractString; ttl=nothing) where {T}
+    value = modify!(store, key; ttl) do old
+        old === nothing ? convert(T, f()) : old
     end
+    return value::T
 end
 
 """

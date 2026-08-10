@@ -20,3 +20,5 @@ const TOKENS = [Token("at_1", 3600, ["read"]),
     include("codecs.jl")
     include("backends.jl")
 end
+
+include("trim_compile_tests.jl")
