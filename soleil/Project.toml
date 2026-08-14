@@ -1,0 +1,5 @@
+[deps]
+AbstractStores = "b8592f88-5fd7-4e10-8c52-04e8e19aea3c"
+
+[sources]
+AbstractStores = {rev = "trim-despecialize-put", url = "https://github.com/JuliaServices/AbstractStores.jl"}

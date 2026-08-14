@@ -169,7 +169,19 @@ supportsttl(store::FileStore) = canexpire(store.codec)
 supportslisting(::FileStore) = true
 isatomic(::FileStore) = false
 
-Base.lock(f, store::FileStore) = lock(f, store.lock)
+# Manual acquire/release instead of `lock(f, l)`: on current Julia nightly
+# the cancellable keyword body of `Base.lock(f, ::ReentrantLock)` is not
+# inferred, so every closure result would widen to Any (and juliac --trim
+# cannot resolve the downstream calls).
+function Base.lock(f, store::FileStore)
+    l = store.lock
+    lock(l)
+    try
+        return f()
+    finally
+        unlock(l)
+    end
+end
 
 function keypath(store::FileStore, key::AbstractString)
     isempty(key) && throw(ArgumentError(

@@ -47,7 +47,19 @@ supportsttl(::MemoryStore) = true
 supportslisting(::MemoryStore) = true
 isatomic(::MemoryStore) = true
 
-Base.lock(f, store::MemoryStore) = lock(f, store.lock)
+# Manual acquire/release instead of `lock(f, l)`: on current Julia nightly
+# the cancellable keyword body of `Base.lock(f, ::ReentrantLock)` is not
+# inferred, so every closure result would widen to Any (and juliac --trim
+# cannot resolve the downstream calls).
+function Base.lock(f, store::MemoryStore)
+    l = store.lock
+    lock(l)
+    try
+        return f()
+    finally
+        unlock(l)
+    end
+end
 
 function Base.get(store::MemoryStore, key::AbstractString, default)
     return @lock store.lock begin
