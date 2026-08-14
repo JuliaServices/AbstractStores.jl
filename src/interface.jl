@@ -503,8 +503,13 @@ Base.get!(store::AbstractStore{T}, key::AbstractString, default; ttl=nothing) wh
     get!(() -> convert(T, default), store, key; ttl)
 
 function Base.get!(f, store::AbstractStore{T}, key::AbstractString; ttl=nothing) where {T}
+    # The `old::T` assert types the closure's return: a store whose backend is
+    # value-erased (e.g. a PrefixedStore view over a FileStore{Any}) reads
+    # entries back as `Any`, and without the assert the eventual `put!` of a
+    # miss is called with an `Any`-typed value — a runtime-specializing
+    # dispatch that whole-program (juliac --trim) verification rejects.
     value = modify!(store, key; ttl) do old
-        old === nothing ? convert(T, f()) : old
+        old === nothing ? convert(T, f()) : old::T
     end
     return value::T
 end
