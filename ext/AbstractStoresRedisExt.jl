@@ -99,6 +99,11 @@ function evalcas(store::RedisStore, args::AbstractString...)
     end
 end
 
+# The value type a typed view passes through is irrelevant here: the server
+# owns the value type and the operation is natively atomic.
+AbstractStores.modify!(::Type, f, store::RedisStore, key::AbstractString; ttl=nothing) =
+    AbstractStores.modify!(f, store, key; ttl)
+
 function AbstractStores.modify!(f, store::RedisStore, key::AbstractString; ttl=nothing)
     k = String(key)
     secs = ttlseconds(ttl)

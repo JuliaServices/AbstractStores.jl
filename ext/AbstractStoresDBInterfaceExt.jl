@@ -239,6 +239,11 @@ function caswrite(store::SQLStore, key::String, text::Union{Nothing,String},
     return won[]
 end
 
+# The value type a typed view passes through is irrelevant here: the server
+# owns the value type and the operation is natively atomic.
+AbstractStores.modify!(::Type, f, store::SQLStore, key::AbstractString; ttl=nothing) =
+    AbstractStores.modify!(f, store, key; ttl)
+
 function AbstractStores.modify!(f, store::SQLStore, key::AbstractString; ttl=nothing)
     k = String(key)
     for _ in 1:MAX_CAS_ATTEMPTS

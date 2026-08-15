@@ -388,16 +388,23 @@ modify!(store, key) do old
 end
 ```
 """
-function modify!(f, store::AbstractStore, key::AbstractString; ttl=nothing)
+modify!(f, store::AbstractStore{T}, key::AbstractString; ttl=nothing) where {T} =
+    modify!(T, f, store, key; ttl)
+
+# Typed-passthrough form: `V` is the value type of the view driving this
+# round trip (see the typed `get`/`put!` entry points). Backends with a
+# native atomic modify! (Redis, SQL) receive it through this method too and
+# may ignore it.
+function modify!(::Type{V}, f, store::AbstractStore, key::AbstractString; ttl=nothing) where {V}
     checkttl(store, ttl)
     return lock(store) do
-        old = get(store, key, nothing)
+        old = get(V, store, key, nothing)
         new = f(old)
         new === old && return new       # unchanged: don't write, don't touch the expiry
         if new === nothing
             delete!(store, key)
         else
-            put!(store, key, new; ttl)
+            put!(V, store, key, new; ttl)
         end
         return new
     end
