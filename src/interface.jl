@@ -430,6 +430,19 @@ override [`modify!`](@ref) with a server-side atomic operation.
 """
 Base.lock(f, ::AbstractStore) = f()
 
+# Manual acquire/release instead of `lock(f, l)`: on current Julia nightly,
+# the cancellable keyword body of `Base.lock(f, ::ReentrantLock)` widens the
+# closure result to `Any`, which leaves downstream calls unresolved under
+# `juliac --trim`.
+function withstorelock(f, l::ReentrantLock)
+    lock(l)
+    try
+        return f()
+    finally
+        unlock(l)
+    end
+end
+
 #-------------------------------------------------------------------------------
 # Derived operations
 #-------------------------------------------------------------------------------

@@ -84,7 +84,7 @@ supportsttl(store::ObjectStore) = canexpire(store.codec)
 supportslisting(::ObjectStore) = true
 isatomic(::ObjectStore) = false
 
-Base.lock(f, store::ObjectStore) = lock(f, store.lock)
+Base.lock(f, store::ObjectStore) = withstorelock(f, store.lock)
 
 """
     AbstractStores.checkobjectkey(key)

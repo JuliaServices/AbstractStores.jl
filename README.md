@@ -222,10 +222,12 @@ Where the bytes live and how a value becomes bytes are separate decisions:
   `AbstractStore{Vector{UInt8}}`. The object in your bucket is exactly the bytes
   you put there.
 
-One rule to remember: **decoding happens at the store's `eltype`**. With
-`JSONCodec`, use concretely-typed stores (`SQLStore{Job}`, `FileStore{Config}`)
-— a `FileStore{Any}` with a JSON codec hands you back `Dict`s, not your structs.
-`SerializedCodec` preserves types regardless.
+One rule to remember: **decoding normally happens at the store's `eltype`**.
+With `JSONCodec`, use concretely typed stores (`SQLStore{Job}`,
+`FileStore{Config}`). A typed `PrefixedStore` is the exception for `FileStore`:
+it forwards the view type to the codec, so `PrefixedStore{Config}` over a shared
+`FileStore{Any}` still returns `Config`. `SerializedCodec` preserves written
+types regardless.
 
 ## Namespacing
 
@@ -240,9 +242,11 @@ codes   = PrefixedStore{CodeRecord}(backend, "oauth/code/")
 empty!(codes)          # scoped — leaves `tokens` alone
 ```
 
-Typed views like the above require a type-preserving parent (`MemoryStore`, or
-any store with `SerializedCodec`); with `JSONCodec`, give each kind of state its
-own concretely-typed store instead. See `?PrefixedStore`.
+Typed views like the above work with a type-preserving parent (`MemoryStore`, or
+any store with `SerializedCodec`). `FileStore` also accepts the view's type as a
+codec hint, including through nested views. Other backends may use their own
+`eltype`; with `JSONCodec`, give each kind of state its own concretely typed
+store unless the backend documents typed-view decoding. See `?PrefixedStore`.
 
 ## Implementing a store
 

@@ -169,19 +169,7 @@ supportsttl(store::FileStore) = canexpire(store.codec)
 supportslisting(::FileStore) = true
 isatomic(::FileStore) = false
 
-# Manual acquire/release instead of `lock(f, l)`: on current Julia nightly
-# the cancellable keyword body of `Base.lock(f, ::ReentrantLock)` is not
-# inferred, so every closure result would widen to Any (and juliac --trim
-# cannot resolve the downstream calls).
-function Base.lock(f, store::FileStore)
-    l = store.lock
-    lock(l)
-    try
-        return f()
-    finally
-        unlock(l)
-    end
-end
+Base.lock(f, store::FileStore) = withstorelock(f, store.lock)
 
 function keypath(store::FileStore, key::AbstractString)
     isempty(key) && throw(ArgumentError(
@@ -246,8 +234,11 @@ function Base.put!(::Type{T}, store::FileStore, key::AbstractString, value; ttl=
         # temp name starts with '.' so a concurrent `keys` skips it
         tmp = joinpath(store.dir, string(".tmp-", basename(path), "-", getpid(), "-", rand(UInt32)))
         try
-            open(tmp, "w") do io
+            io = open(tmp; write=true, create=true, truncate=true)
+            try
                 write(io, bytes)
+            finally
+                close(io)
             end
             store.permissions === nothing || chmod(tmp, Int(store.permissions))
             # `Base.Filesystem.rename`, not `mv(force=true)`: mv on Julia < 1.12

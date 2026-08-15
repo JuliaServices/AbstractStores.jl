@@ -42,9 +42,25 @@ function trim_prefixed_store()::Nothing
     return nothing
 end
 
+function trim_typed_file_view()::Nothing
+    backend = AbstractStores.FileStore{Any}(mktempdir(); codec=AbstractStores.RawCodec())
+    root = AbstractStores.PrefixedStore(backend, "root/")
+    values = AbstractStores.PrefixedStore{String}(root, "values/")
+
+    put!(values, "one", "1")
+    trim_assert(get(values, "one", "0") == "1", "typed file get")
+    trim_assert(get!(values, "one", "9") == "1", "typed file get existing")
+    trim_assert(get!(values, "two", "2") == "2", "typed file get or create")
+    trim_assert(AbstractStores.modify!(value -> value * "+", values, "two") == "2+",
+                "typed file modify")
+    trim_assert(Set(keys(values)) == Set(["one", "two"]), "typed file keys")
+    return nothing
+end
+
 function run_abstractstores_trim()::Nothing
     trim_memory_store()
     trim_prefixed_store()
+    trim_typed_file_view()
     return nothing
 end
 
