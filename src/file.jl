@@ -196,7 +196,12 @@ function keypath(store::FileStore, key::AbstractString)
 end
 
 # Read the raw entry, or `nothing` if the file is absent.
-function readentry(store::FileStore{T}, path::AbstractString) where {T}
+readentry(store::FileStore{T}, path::AbstractString) where {T} = readentry(T, store, path)
+
+# The explicit value type lets a typed view over a value-erased backend
+# (`PrefixedStore{Job}` on a `FileStore{Any}`) decode straight to `Job`, so
+# the codec sees a concrete type instead of `Any`.
+function readentry(::Type{T}, store::FileStore, path::AbstractString) where {T}
     isfile(path) || return nothing
     bytes = try
         read(path)
@@ -209,13 +214,15 @@ function readentry(store::FileStore{T}, path::AbstractString) where {T}
            Entry{T}(decode(store.codec, T, bytes), nothing)
 end
 
-function Base.get(store::FileStore, key::AbstractString, default)
+Base.get(store::FileStore{T}, key::AbstractString, default) where {T} = get(T, store, key, default)
+
+function Base.get(::Type{T}, store::FileStore, key::AbstractString, default) where {T}
     path = keypath(store, key)
     # `lock(f, store)`, not `lock(f, store.lock)`: the store method acquires
     # manually, which stays inferred on nightly where the cancellable
     # `Base.lock(f, ::ReentrantLock)` keyword body does not.
     return lock(store) do
-        entry = readentry(store, path)
+        entry = readentry(T, store, path)
         entry === nothing && return default
         if isexpired(entry)
             # best-effort reclamation: reading must not require write access
@@ -226,7 +233,10 @@ function Base.get(store::FileStore, key::AbstractString, default)
     end
 end
 
-function Base.put!(store::FileStore{T}, key::AbstractString, value; ttl=nothing) where {T}
+Base.put!(store::FileStore{T}, key::AbstractString, value; ttl=nothing) where {T} =
+    put!(T, store, key, value; ttl)
+
+function Base.put!(::Type{T}, store::FileStore, key::AbstractString, value; ttl=nothing) where {T}
     checkttl(store, ttl)
     path = keypath(store, key)
     typed = convert(T, value)

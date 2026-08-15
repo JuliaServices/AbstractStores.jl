@@ -60,11 +60,14 @@ Base.lock(f, store::PrefixedStore) = lock(f, store.parent)
 
 full(store::PrefixedStore, key::AbstractString) = string(store.prefix, key)
 
-Base.get(store::PrefixedStore, key::AbstractString, default) =
-    get(store.parent, full(store, key), default)
+# A typed view forwards its own value type to the backend, so a
+# value-erased parent (`FileStore{Any}`) still encodes and decodes each
+# record as the view's concrete `T` — keeping the codec statically typed.
+Base.get(store::PrefixedStore{T}, key::AbstractString, default) where {T} =
+    get(T, store.parent, full(store, key), default)
 
-function Base.put!(store::PrefixedStore, key::AbstractString, value; ttl=nothing)
-    put!(store.parent, full(store, key), value; ttl)
+function Base.put!(store::PrefixedStore{T}, key::AbstractString, value; ttl=nothing) where {T}
+    put!(T, store.parent, full(store, key), value; ttl)
     return store
 end
 
