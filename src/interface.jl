@@ -414,6 +414,7 @@ end
 # truth (MemoryStore, SQL, Redis) ignore the requested type; FileStore uses it
 # to keep its codec concretely typed under a value-erased parent.
 Base.get(::Type, store::AbstractStore, key::AbstractString, default) = get(store, key, default)
+Base.keys(::Type, store::AbstractStore; prefix::AbstractString="") = keys(store; prefix)
 Base.put!(::Type, store::AbstractStore, key::AbstractString, value; ttl=nothing) =
     put!(store, key, value; ttl)
 

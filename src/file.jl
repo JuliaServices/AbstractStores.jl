@@ -288,7 +288,10 @@ When the codec carries an expiry envelope this reads every file, because the
 deadline lives inside the value — a directory of `n` entries costs `n` reads.
 With a [`RawCodec`](@ref) (no expiry possible) it is a plain `readdir`.
 """
-function Base.keys(store::FileStore; prefix::AbstractString="")
+Base.keys(store::FileStore{T}; prefix::AbstractString="") where {T} = keys(T, store; prefix)
+
+# Typed form: a view's T drives the per-entry decode used to hide expired keys.
+function Base.keys(::Type{T}, store::FileStore; prefix::AbstractString="") where {T}
     names = @lock store.lock readdir(store.dir; sort=false)
     result = String[]
     now = Dates.now(UTC)
@@ -298,7 +301,7 @@ function Base.keys(store::FileStore; prefix::AbstractString="")
         key === nothing && continue
         startswith(key, prefix) || continue
         if canexpire(store.codec)
-            entry = @lock store.lock readentry(store, joinpath(store.dir, name))
+            entry = @lock store.lock readentry(T, store, joinpath(store.dir, name))
             (entry === nothing || isexpired(entry, now)) && continue
         end
         push!(result, key)

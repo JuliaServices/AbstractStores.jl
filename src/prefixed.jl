@@ -79,10 +79,10 @@ end
 Base.haskey(store::PrefixedStore, key::AbstractString) =
     haskey(store.parent, full(store, key))
 
-function Base.keys(store::PrefixedStore; prefix::AbstractString="")
+function Base.keys(store::PrefixedStore{T}; prefix::AbstractString="") where {T}
     n = ncodeunits(store.prefix)
     # every key came back with `store.prefix` attached, so byte n+1 starts the suffix
-    return [k[n+1:end] for k in keys(store.parent; prefix=full(store, prefix))]
+    return [k[n+1:end] for k in keys(T, store.parent; prefix=full(store, prefix))]
 end
 
 Base.empty!(store::PrefixedStore; prefix::AbstractString="") =
