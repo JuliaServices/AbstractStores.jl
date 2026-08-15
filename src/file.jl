@@ -211,7 +211,10 @@ end
 
 function Base.get(store::FileStore, key::AbstractString, default)
     path = keypath(store, key)
-    return lock(store.lock) do
+    # `lock(f, store)`, not `lock(f, store.lock)`: the store method acquires
+    # manually, which stays inferred on nightly where the cancellable
+    # `Base.lock(f, ::ReentrantLock)` keyword body does not.
+    return lock(store) do
         entry = readentry(store, path)
         entry === nothing && return default
         if isexpired(entry)
@@ -229,7 +232,7 @@ function Base.put!(store::FileStore{T}, key::AbstractString, value; ttl=nothing)
     typed = convert(T, value)
     bytes = canexpire(store.codec) ? encodeentry(store.codec, Entry{T}(typed, expiryof(ttl))) :
             encode(store.codec, typed)
-    lock(store.lock) do
+    lock(store) do
         # temp name starts with '.' so a concurrent `keys` skips it
         tmp = joinpath(store.dir, string(".tmp-", basename(path), "-", getpid(), "-", rand(UInt32)))
         try
