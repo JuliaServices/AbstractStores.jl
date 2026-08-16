@@ -82,8 +82,15 @@ function encode(::SerializedCodec, value)
     return take!(io)
 end
 
+# Serialization reproduces the value exactly as written, so a typed view over
+# a value-erased backend can read back an `Entry{Any}` (or a wider value)
+# where it asked for `Entry{T}`; convert instead of asserting so the view's
+# type still holds. Non-envelope decodes convert the same way.
 decode(::SerializedCodec, ::Type{T}, bytes::AbstractVector{UInt8}) where {T} =
-    Serialization.deserialize(IOBuffer(bytes))::T
+    convert(T, Serialization.deserialize(IOBuffer(bytes)))::T
+
+Base.convert(::Type{Entry{T}}, entry::Entry) where {T} =
+    entry isa Entry{T} ? entry : Entry{T}(convert(T, entry.value), entry.expires)
 
 """
     RawCodec()

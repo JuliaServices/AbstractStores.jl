@@ -47,7 +47,7 @@ supportsttl(::MemoryStore) = true
 supportslisting(::MemoryStore) = true
 isatomic(::MemoryStore) = true
 
-Base.lock(f, store::MemoryStore) = lock(f, store.lock)
+Base.lock(f, store::MemoryStore) = withstorelock(f, store.lock)
 
 function Base.get(store::MemoryStore, key::AbstractString, default)
     return @lock store.lock begin

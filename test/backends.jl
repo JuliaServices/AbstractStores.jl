@@ -69,6 +69,7 @@ function sql_conformance(conn, label::AbstractString)
         store = SQLStore{String}(conn; table="behavior")
         empty!(store)
         @test supportsttl(store) && supportslisting(store) && isatomic(store)
+        @test @inferred(lock(() -> 42, store)) == 42
 
         @testset "the table name is the only interpolated identifier" begin
             @test_throws ArgumentError SQLStore{String}(conn; table="bad; DROP TABLE x")

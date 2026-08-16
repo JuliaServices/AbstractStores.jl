@@ -388,20 +388,35 @@ modify!(store, key) do old
 end
 ```
 """
-function modify!(f, store::AbstractStore, key::AbstractString; ttl=nothing)
+modify!(f, store::AbstractStore{T}, key::AbstractString; ttl=nothing) where {T} =
+    modify!(T, f, store, key; ttl)
+
+# Typed-passthrough form: `V` is the value type of the view driving this
+# round trip (see the typed `get`/`put!` entry points). Backends with a
+# native atomic modify! (Redis, SQL) receive it through this method too and
+# may ignore it.
+function modify!(::Type{V}, f, store::AbstractStore, key::AbstractString; ttl=nothing) where {V}
     checkttl(store, ttl)
     return lock(store) do
-        old = get(store, key, nothing)
+        old = get(V, store, key, nothing)
         new = f(old)
         new === old && return new       # unchanged: don't write, don't touch the expiry
         if new === nothing
             delete!(store, key)
         else
-            put!(store, key, new; ttl)
+            put!(V, store, key, new; ttl)
         end
         return new
     end
 end
+
+# Typed-passthrough entry points. Backends whose value type is the source of
+# truth (MemoryStore, SQL, Redis) ignore the requested type; FileStore uses it
+# to keep its codec concretely typed under a value-erased parent.
+Base.get(::Type, store::AbstractStore, key::AbstractString, default) = get(store, key, default)
+Base.keys(::Type, store::AbstractStore; prefix::AbstractString="") = keys(store; prefix)
+Base.put!(::Type, store::AbstractStore, key::AbstractString, value; ttl=nothing) =
+    put!(store, key, value; ttl)
 
 """
     lock(f::Function, store::AbstractStore)
@@ -414,6 +429,19 @@ process-local state should override this (and report
 override [`modify!`](@ref) with a server-side atomic operation.
 """
 Base.lock(f, ::AbstractStore) = f()
+
+# Manual acquire/release instead of `lock(f, l)`: on current Julia nightly,
+# the cancellable keyword body of `Base.lock(f, ::ReentrantLock)` widens the
+# closure result to `Any`, which leaves downstream calls unresolved under
+# `juliac --trim`.
+function withstorelock(f, l::ReentrantLock)
+    lock(l)
+    try
+        return f()
+    finally
+        unlock(l)
+    end
+end
 
 #-------------------------------------------------------------------------------
 # Derived operations
@@ -503,8 +531,13 @@ Base.get!(store::AbstractStore{T}, key::AbstractString, default; ttl=nothing) wh
     get!(() -> convert(T, default), store, key; ttl)
 
 function Base.get!(f, store::AbstractStore{T}, key::AbstractString; ttl=nothing) where {T}
+    # The `old::T` assert types the closure's return: a store whose backend is
+    # value-erased (e.g. a PrefixedStore view over a FileStore{Any}) reads
+    # entries back as `Any`, and without the assert the eventual `put!` of a
+    # miss is called with an `Any`-typed value — a runtime-specializing
+    # dispatch that whole-program (juliac --trim) verification rejects.
     value = modify!(store, key; ttl) do old
-        old === nothing ? convert(T, f()) : old
+        old === nothing ? convert(T, f()) : old::T
     end
     return value::T
 end

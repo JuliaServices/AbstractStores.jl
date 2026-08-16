@@ -169,7 +169,7 @@ supportsttl(store::FileStore) = canexpire(store.codec)
 supportslisting(::FileStore) = true
 isatomic(::FileStore) = false
 
-Base.lock(f, store::FileStore) = lock(f, store.lock)
+Base.lock(f, store::FileStore) = withstorelock(f, store.lock)
 
 function keypath(store::FileStore, key::AbstractString)
     isempty(key) && throw(ArgumentError(
@@ -184,7 +184,12 @@ function keypath(store::FileStore, key::AbstractString)
 end
 
 # Read the raw entry, or `nothing` if the file is absent.
-function readentry(store::FileStore{T}, path::AbstractString) where {T}
+readentry(store::FileStore{T}, path::AbstractString) where {T} = readentry(T, store, path)
+
+# The explicit value type lets a typed view over a value-erased backend
+# (`PrefixedStore{Job}` on a `FileStore{Any}`) decode straight to `Job`, so
+# the codec sees a concrete type instead of `Any`.
+function readentry(::Type{T}, store::FileStore, path::AbstractString) where {T}
     isfile(path) || return nothing
     bytes = try
         read(path)
@@ -197,10 +202,15 @@ function readentry(store::FileStore{T}, path::AbstractString) where {T}
            Entry{T}(decode(store.codec, T, bytes), nothing)
 end
 
-function Base.get(store::FileStore, key::AbstractString, default)
+Base.get(store::FileStore{T}, key::AbstractString, default) where {T} = get(T, store, key, default)
+
+function Base.get(::Type{T}, store::FileStore, key::AbstractString, default) where {T}
     path = keypath(store, key)
-    return lock(store.lock) do
-        entry = readentry(store, path)
+    # `lock(f, store)`, not `lock(f, store.lock)`: the store method acquires
+    # manually, which stays inferred on nightly where the cancellable
+    # `Base.lock(f, ::ReentrantLock)` keyword body does not.
+    return lock(store) do
+        entry = readentry(T, store, path)
         entry === nothing && return default
         if isexpired(entry)
             # best-effort reclamation: reading must not require write access
@@ -211,18 +221,24 @@ function Base.get(store::FileStore, key::AbstractString, default)
     end
 end
 
-function Base.put!(store::FileStore{T}, key::AbstractString, value; ttl=nothing) where {T}
+Base.put!(store::FileStore{T}, key::AbstractString, value; ttl=nothing) where {T} =
+    put!(T, store, key, value; ttl)
+
+function Base.put!(::Type{T}, store::FileStore, key::AbstractString, value; ttl=nothing) where {T}
     checkttl(store, ttl)
     path = keypath(store, key)
     typed = convert(T, value)
     bytes = canexpire(store.codec) ? encodeentry(store.codec, Entry{T}(typed, expiryof(ttl))) :
             encode(store.codec, typed)
-    lock(store.lock) do
+    lock(store) do
         # temp name starts with '.' so a concurrent `keys` skips it
         tmp = joinpath(store.dir, string(".tmp-", basename(path), "-", getpid(), "-", rand(UInt32)))
         try
-            open(tmp, "w") do io
+            io = open(tmp; write=true, create=true, truncate=true)
+            try
                 write(io, bytes)
+            finally
+                close(io)
             end
             store.permissions === nothing || chmod(tmp, Int(store.permissions))
             # `Base.Filesystem.rename`, not `mv(force=true)`: mv on Julia < 1.12
@@ -263,7 +279,10 @@ When the codec carries an expiry envelope this reads every file, because the
 deadline lives inside the value — a directory of `n` entries costs `n` reads.
 With a [`RawCodec`](@ref) (no expiry possible) it is a plain `readdir`.
 """
-function Base.keys(store::FileStore; prefix::AbstractString="")
+Base.keys(store::FileStore{T}; prefix::AbstractString="") where {T} = keys(T, store; prefix)
+
+# Typed form: a view's T drives the per-entry decode used to hide expired keys.
+function Base.keys(::Type{T}, store::FileStore; prefix::AbstractString="") where {T}
     names = @lock store.lock readdir(store.dir; sort=false)
     result = String[]
     now = Dates.now(UTC)
@@ -273,7 +292,7 @@ function Base.keys(store::FileStore; prefix::AbstractString="")
         key === nothing && continue
         startswith(key, prefix) || continue
         if canexpire(store.codec)
-            entry = @lock store.lock readentry(store, joinpath(store.dir, name))
+            entry = @lock store.lock readentry(T, store, joinpath(store.dir, name))
             (entry === nothing || isexpired(entry, now)) && continue
         end
         push!(result, key)

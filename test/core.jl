@@ -14,6 +14,7 @@ using AbstractStores: supportsttl, supportslisting, isatomic, encodekey, decodek
     @test valtype(store) === Int
     @test keytype(store) === String
     @test sprint(show, store) == "MemoryStore{Int64}(0 keys)"
+    @test @inferred(lock(() -> 42, store)) == 42
 
     # values are converted to the store's eltype
     store["n"] = 0x05
@@ -37,6 +38,7 @@ end
     AbstractStores.runstoretests(TOKENS; name="FileStore{Token}") do
         FileStore{Token}(mktempdir())
     end
+    @test @inferred(lock(() -> 42, FileStore{Int}(mktempdir()))) == 42
 
     @testset "key encoding" begin
         # round-trip
@@ -226,6 +228,28 @@ end
     nested["c"] = "deep"
     @test backend["a/b/c"] == "deep"
     @test collect(keys(nested)) == ["c"]
+
+    @testset "typed views over a value-erased FileStore" begin
+        parent = FileStore{Any}(mktempdir())
+        root = PrefixedStore(parent, "root/")
+        typed = PrefixedStore{Token}(root, "tokens/")
+
+        # Exercise both files written through the typed view and wider
+        # Entry{Any} files left by direct access to the shared parent.
+        typed["new"] = TOKENS[1]
+        parent["root/tokens/existing"] = TOKENS[2]
+        @test typed["new"] == TOKENS[1]
+        @test typed["existing"] == TOKENS[2]
+
+        @test get!(typed, "new", TOKENS[3]) == TOKENS[1]
+        @test get!(typed, "created", TOKENS[3]) == TOKENS[3]
+        @test modify!(_ -> TOKENS[2], typed, "created") == TOKENS[2]
+        @test typed["created"] == TOKENS[2]
+
+        put!(typed, "expired", TOKENS[1]; ttl=Millisecond(20))
+        sleep(0.1)
+        @test Set(keys(typed)) == Set(["new", "existing", "created"])
+    end
 end
 
 @testset "interface defaults" begin

@@ -185,7 +185,7 @@ supportsttl(::SQLStore) = true
 supportslisting(::SQLStore) = true
 isatomic(::SQLStore) = true
 
-Base.lock(f, store::SQLStore) = lock(f, store.lock)
+Base.lock(f, store::SQLStore) = withstorelock(f, store.lock)
 
 unixms(t::DateTime) = round(Int64, Dates.datetime2unix(t) * 1000)
 # `missing`, not `nothing`, is the portable spelling of SQL NULL as a bound

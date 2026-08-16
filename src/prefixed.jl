@@ -14,18 +14,12 @@ Every operation except `sweep!` is scoped to the prefix — `empty!` on a
 entries across the whole parent (reclamation has no reason to stop at a
 namespace boundary).  All traits are inherited from `parent`.
 
-The two-argument form reuses the parent's `eltype`.  The parameterized form
-narrows the view's type — but the *parent* still performs the decoding, so this
-only round-trips when the parent preserves types: `MemoryStore` (values held by
-reference) or any store using `SerializedCodec`.
-
-!!! warning "Typed views require a type-preserving parent"
-    `PrefixedStore{Job}(FileStore{Any}(dir; codec=JSONCodec()), "jobs/")` does
-    **not** give you `Job`s back — JSON is decoded at the parent's `eltype`
-    (`Any`), so values come back as `Dict{String,Any}`.  With a portable codec
-    like `JSONCodec`, give each kind of state its own concretely-typed store
-    (same backend, different directory/table/prefix) instead of typed views over
-    one `Any` store.
+The two-argument form reuses the parent's `eltype`. The parameterized form
+narrows the view's type and forwards that type through nested views. `FileStore`
+uses the requested type for its codec, so a `PrefixedStore{Job}` over a
+`FileStore{Any}` can encode and decode `Job` values directly, including with
+`JSONCodec`. Other backends may treat their own `eltype` as authoritative; use a
+concretely typed parent when its documentation does not promise typed decoding.
 
 # Examples
 ```julia
@@ -60,11 +54,20 @@ Base.lock(f, store::PrefixedStore) = lock(f, store.parent)
 
 full(store::PrefixedStore, key::AbstractString) = string(store.prefix, key)
 
-Base.get(store::PrefixedStore, key::AbstractString, default) =
-    get(store.parent, full(store, key), default)
+# A typed view forwards its own value type to the backend, so a
+# value-erased parent (`FileStore{Any}`) still encodes and decodes each
+# record as the view's concrete `T` — keeping the codec statically typed.
+Base.get(store::PrefixedStore{T}, key::AbstractString, default) where {T} =
+    get(T, store, key, default)
 
-function Base.put!(store::PrefixedStore, key::AbstractString, value; ttl=nothing)
-    put!(store.parent, full(store, key), value; ttl)
+Base.get(::Type{T}, store::PrefixedStore, key::AbstractString, default) where {T} =
+    get(T, store.parent, full(store, key), default)
+
+Base.put!(store::PrefixedStore{T}, key::AbstractString, value; ttl=nothing) where {T} =
+    put!(T, store, key, value; ttl)
+
+function Base.put!(::Type{T}, store::PrefixedStore, key::AbstractString, value; ttl=nothing) where {T}
+    put!(T, store.parent, full(store, key), value; ttl)
     return store
 end
 
@@ -76,18 +79,28 @@ end
 Base.haskey(store::PrefixedStore, key::AbstractString) =
     haskey(store.parent, full(store, key))
 
-function Base.keys(store::PrefixedStore; prefix::AbstractString="")
+Base.keys(store::PrefixedStore{T}; prefix::AbstractString="") where {T} =
+    keys(T, store; prefix)
+
+function Base.keys(::Type{T}, store::PrefixedStore; prefix::AbstractString="") where {T}
     n = ncodeunits(store.prefix)
     # every key came back with `store.prefix` attached, so byte n+1 starts the suffix
-    return [k[n+1:end] for k in keys(store.parent; prefix=full(store, prefix))]
+    return [k[n+1:end] for k in keys(T, store.parent; prefix=full(store, prefix))]
 end
 
 Base.empty!(store::PrefixedStore; prefix::AbstractString="") =
     (empty!(store.parent; prefix=full(store, prefix)); store)
 
 # forward to the parent so a native atomic implementation is not lost
-modify!(f, store::PrefixedStore, key::AbstractString; ttl=nothing) =
-    modify!(f, store.parent, full(store, key); ttl)
+# Forwarded WITH the view's value type: backends with a native atomic
+# read-modify-write (Redis, SQL) keep their own modify!, while the generic
+# lock+get+put! loop on file/memory backends round-trips through the typed
+# entry points so the codec sees the view's concrete T.
+modify!(f, store::PrefixedStore{T}, key::AbstractString; ttl=nothing) where {T} =
+    modify!(T, f, store, key; ttl)
+
+modify!(::Type{T}, f, store::PrefixedStore, key::AbstractString; ttl=nothing) where {T} =
+    modify!(T, f, store.parent, full(store, key); ttl)
 
 sweep!(store::PrefixedStore) = sweep!(store.parent)
 

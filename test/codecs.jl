@@ -65,4 +65,18 @@ using AbstractStores: encode, decode, encodeentry, decodeentry, canexpire, Entry
         @test occursin("at_2", text)
         @test JSON.parse(text)["value"]["expires_in"] == 7200
     end
+
+    @testset "typed nested view drives JSON decoding" begin
+        parent = FileStore{Any}(mktempdir(); codec=JSONCodec())
+        root = PrefixedStore(parent, "root/")
+        typed = PrefixedStore{Token}(root, "tokens/")
+
+        typed["new"] = TOKENS[1]
+        parent["root/tokens/existing"] = TOKENS[2]
+        @test typed["new"] == TOKENS[1]
+        @test typed["existing"] == TOKENS[2]
+        @test get!(typed, "created", TOKENS[3]) == TOKENS[3]
+        @test modify!(_ -> TOKENS[2], typed, "created") == TOKENS[2]
+        @test Set(keys(typed)) == Set(["new", "existing", "created"])
+    end
 end
