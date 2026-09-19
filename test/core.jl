@@ -16,6 +16,21 @@ using AbstractStores: supportsttl, supportslisting, isatomic, encodekey, decodek
     @test sprint(show, store) == "MemoryStore{Int64}(0 keys)"
     @test @inferred(lock(() -> 42, store)) == 42
 
+    @testset "counts ignore retained expired entries" begin
+        counted = MemoryStore{Int}()
+        @test length(counted) == 0
+        @test isempty(counted)
+        counted.data["expired"] = Entry(1, DateTime(2000))
+        @test length(counted) == 0
+        @test isempty(counted)
+        counted["live"] = 2
+        @test length(counted) == 1
+        @test !isempty(counted)
+        @test length(counted.data) == 2
+        delete!(counted, "live")
+        @test isempty(counted)
+    end
+
     # values are converted to the store's eltype
     store["n"] = 0x05
     @test store["n"] === 5

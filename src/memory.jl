@@ -86,7 +86,15 @@ function Base.keys(store::MemoryStore; prefix::AbstractString="")
                              if startswith(k, prefix) && !isexpired(e, now)]
 end
 
-Base.length(store::MemoryStore) = length(keys(store))
+function Base.length(store::MemoryStore)
+    now = Dates.now(UTC)
+    return @lock store.lock count(e -> !isexpired(e, now), values(store.data))
+end
+
+function Base.isempty(store::MemoryStore)
+    now = Dates.now(UTC)
+    return @lock store.lock all(e -> isexpired(e, now), values(store.data))
+end
 
 function Base.empty!(store::MemoryStore; prefix::AbstractString="")
     @lock store.lock begin
