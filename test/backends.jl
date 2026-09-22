@@ -215,6 +215,23 @@ end
                 @test Redis.get(client, prefix * "px") === nothing   # gone from Redis
             end
 
+            @testset "TTL must not round to persistent storage" begin
+                for ttl in (0.0001, 0.0005)
+                    s = fresh(String)
+                    @test_throws ArgumentError put!(s, "new", "value"; ttl)
+                    @test_throws ArgumentError modify!(_ -> "value", s, "new"; ttl)
+                    @test_throws ArgumentError get!(s, "new", "value"; ttl)
+                    @test !haskey(s, "new")
+
+                    put!(s, "existing", "original"; ttl=Second(60))
+                    @test_throws ArgumentError put!(s, "existing", "changed"; ttl)
+                    @test_throws ArgumentError modify!(_ -> "changed", s, "existing"; ttl)
+                    @test s["existing"] == "original"
+                    @test Redis.execute(client, AbstractStoresRedisExt.rawcommand(
+                        Int, "PTTL", prefix * "existing")) > 0
+                end
+            end
+
             @testset "CAS compares a token, not the value" begin
                 # An A->B->A sequence between our read and our write must still be
                 # detected as a conflict, which comparing values alone would miss.

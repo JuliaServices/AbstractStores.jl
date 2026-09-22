@@ -330,6 +330,12 @@ end
     @test ttlseconds(Millisecond(1500)) == 1.5
     @test ttlseconds(2.5) == 2.5
     @test_throws ArgumentError ttlseconds(0)
+    for ttl in (0.0001, 0.0005, Float32(0.0001))
+        @test_throws ArgumentError expiryof(ttl, now)
+        @test_throws ArgumentError ttlseconds(ttl)
+    end
+    @test ttlseconds(nextfloat(0.0005)) == nextfloat(0.0005)
+    @test ttlseconds(Millisecond(1)) == 0.001
 end
 
 @testset "modify! semantics" begin
