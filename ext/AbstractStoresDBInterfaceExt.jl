@@ -21,8 +21,8 @@ AbstractStores.extensionloaded(::Type{<:SQLStore}) = true
 #-------------------------------------------------------------------------------
 
 # Parameters always go through a prepared statement. `DBInterface.execute(conn,
-# sql, params)` is optional for a driver to support — MySQL.jl rejects it outright
-# — whereas prepare/execute is the interface's guaranteed path, and caching the
+# sql, params)` is optional for a driver to support, whereas prepare/execute is
+# the interface's guaranteed path, and caching the
 # statements per store makes it cheaper than the alternative besides.
 #
 # Cached by SQL text rather than by call site: the table name is interpolated in,
@@ -212,9 +212,8 @@ function caswrite(store::SQLStore, key::String, text::Union{Nothing,String},
                   expires::Union{Missing,Int64}, oldtoken::Int64, newtoken::Int64)
     d = store.dialect
     t = store.table
-    # Carried out through a Ref rather than the transaction's return value:
-    # `DBInterface.transaction` is not consistent about propagating it (MySQL.jl
-    # returns the commit's result, discarding the closure's).
+    # Carry the outcome through a Ref so it does not depend on a driver's
+    # propagation of the transaction callback's return value.
     won = Ref(false)
     @lock store.lock DBInterface.transaction(store.conn) do
         if text === nothing

@@ -174,6 +174,8 @@ end
             store = SQLStore{String}(conn; table="dialect")
             @test store.dialect === AbstractStores.MYSQL
             @test store.dialect.keytype == "VARBINARY(512)"   # byte-exact keys are load-bearing
+            cipher = only(collect(DBInterface.execute(conn, "SHOW STATUS LIKE 'Ssl_cipher'")))
+            @test isempty(String(cipher[2]))
         end
     else
         @test_skip "MySQL backend (docker or MySQL.jl unavailable)"
