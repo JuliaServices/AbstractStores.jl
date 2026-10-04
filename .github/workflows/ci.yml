@@ -6,7 +6,7 @@ on:
   pull_request:
 jobs:
   test:
-    name: Julia ${{ matrix.version }} - ${{ matrix.os }} - ${{ matrix.arch }} - ${{ github.event_name }}
+    name: Julia ${{ matrix.version }} - ${{ matrix.os }} - ${{ matrix.arch }} - ${{ github.event_name }}${{ matrix.mysql == '1' && ' - MySQL 1' || '' }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -24,6 +24,10 @@ jobs:
           - os: macOS-latest
             arch: aarch64
             version: 1
+          - os: ubuntu-latest
+            arch: x64
+            version: min
+            mysql: '1'
     steps:
       - uses: actions/checkout@v4
       - uses: julia-actions/setup-julia@v2
@@ -31,6 +35,16 @@ jobs:
           version: ${{ matrix.version }}
           arch: ${{ matrix.arch }}
       - uses: julia-actions/cache@v2
+      - name: Test the supported MySQL 1 series
+        if: matrix.mysql == '1'
+        shell: julia --color=yes --project {0}
+        run: |
+          using TOML
+          project = TOML.parsefile("Project.toml")
+          project["compat"]["MySQL"] = "1.5"
+          open("Project.toml", "w") do io
+            TOML.print(io, project)
+          end
       - uses: julia-actions/julia-buildpkg@v1
       - uses: julia-actions/julia-runtest@v1
       - uses: julia-actions/julia-processcoverage@v1

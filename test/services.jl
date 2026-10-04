@@ -118,15 +118,15 @@ function with_mysql(f::Function)
             ports=Dict(3306 => port),
             environment=Dict("MYSQL_ALLOW_EMPTY_PASSWORD" => "yes",
                              "MYSQL_DATABASE" => MY_DB),
+            # Disable TLS on the disposable server for both driver generations;
+            # MariaDB Connector/C 3.4+ cannot disable it from the client side.
+            command=["mysqld", "--tls-version="],
             wait_strategy=(port=3306,),
             wait_timeout=180.0,
             container_logs_on_error=true) do _
         conn = retry_connect(; timeout=180) do
-            # TLS off: it buys nothing against a throwaway localhost container,
-            # and libmariadb's SSL layer has crashed (SIGABRT in SSL_write)
-            # under Julia's threaded task migration on macOS.
             DBInterface.connect(MySQL.Connection, "127.0.0.1", MY_USER, MY_PASSWORD;
-                                db=MY_DB, port=port, ssl_mode=MySQL.API.SSL_MODE_DISABLED)
+                                db=MY_DB, port=port)
         end
         try
             return f(conn)
