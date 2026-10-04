@@ -118,8 +118,8 @@ function with_mysql(f::Function)
             ports=Dict(3306 => port),
             environment=Dict("MYSQL_ALLOW_EMPTY_PASSWORD" => "yes",
                              "MYSQL_DATABASE" => MY_DB),
-            # Disable TLS on the disposable server for both driver generations;
-            # MariaDB Connector/C 3.4+ cannot disable it from the client side.
+            # Disable TLS on the disposable server so the fixture works with
+            # both driver generations.
             command=["mysqld", "--tls-version="],
             wait_strategy=(port=3306,),
             wait_timeout=180.0,

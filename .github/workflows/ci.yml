@@ -23,6 +23,8 @@ jobs:
           - windows-latest
         arch:
           - x64
+        mysql:
+          - '2'
         include:
           - os: macOS-latest
             arch: aarch64
