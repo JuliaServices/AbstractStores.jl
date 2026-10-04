@@ -1,0 +1,46 @@
+name: Released Documentation
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+jobs:
+  released-docs:
+    name: Documentation for v0.2.0
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pages: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: v0.2.0
+          persist-credentials: false
+      - uses: julia-actions/setup-julia@v2
+        with:
+          version: '1'
+      - name: Verify the released source and install documentation dependencies
+        shell: julia --color=yes --startup-file=no {0}
+        run: |
+          using Pkg, TOML
+          @assert readchomp(`git rev-parse HEAD`) == "0658e0abfdd99a8b5d6ba7b60062c1ec39c99ffb"
+          @assert TOML.parsefile("Project.toml")["version"] == "0.2.0"
+          Pkg.activate("docs")
+          Pkg.develop(PackageSpec(path=pwd()))
+          Pkg.instantiate()
+      - name: Build the released manual and publish only on a manual main run
+        run: |
+          julia --project=docs --startup-file=no --history-file=no -e '
+            # Documenter uses GITHUB_REF to select the release directory.
+            # The source checkout was verified above against the existing tag.
+            withenv("GITHUB_REF" => "refs/tags/v0.2.0") do
+              include("docs/make.jl")
+            end'
+        env:
+          GITHUB_TOKEN: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && secrets.GITHUB_TOKEN || '' }}
+          DOCUMENTER_KEY: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && secrets.DOCUMENTER_KEY || '' }}
+      - name: Request the existing GitHub Pages build
+        if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh api --method POST repos/${{ github.repository }}/pages/builds
