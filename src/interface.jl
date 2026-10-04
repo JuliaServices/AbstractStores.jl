@@ -224,12 +224,14 @@ end
     AbstractStores.ttlseconds(ttl) -> Union{Nothing,Float64}
 
 Normalize a `ttl` into a number of seconds, for backends with native relative
-expiry.  See also [`expiryof`](@ref).
+expiry. The duration must round to a positive number of milliseconds, as with
+[`expiryof`](@ref).
 """
 function ttlseconds(ttl)
     ttl === nothing && return nothing
     secs = ttl isa Dates.Period ? Dates.toms(Dates.Millisecond(ttl)) / 1000 : Float64(ttl)
-    secs > 0 || throw(ArgumentError("ttl must be positive, got $ttl"))
+    secs > 0 && round(Int, secs * 1000) > 0 ||
+        throw(ArgumentError("ttl must round to a positive number of milliseconds, got $ttl"))
     return secs
 end
 

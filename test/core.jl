@@ -16,6 +16,21 @@ using AbstractStores: supportsttl, supportslisting, isatomic, encodekey, decodek
     @test sprint(show, store) == "MemoryStore{Int64}(0 keys)"
     @test @inferred(lock(() -> 42, store)) == 42
 
+    @testset "counts ignore retained expired entries" begin
+        counted = MemoryStore{Int}()
+        @test length(counted) == 0
+        @test isempty(counted)
+        counted.data["expired"] = Entry(1, DateTime(2000))
+        @test length(counted) == 0
+        @test isempty(counted)
+        counted["live"] = 2
+        @test length(counted) == 1
+        @test !isempty(counted)
+        @test length(counted.data) == 2
+        delete!(counted, "live")
+        @test isempty(counted)
+    end
+
     # values are converted to the store's eltype
     store["n"] = 0x05
     @test store["n"] === 5
@@ -315,6 +330,12 @@ end
     @test ttlseconds(Millisecond(1500)) == 1.5
     @test ttlseconds(2.5) == 2.5
     @test_throws ArgumentError ttlseconds(0)
+    for ttl in (0.0001, 0.0005, Float32(0.0001))
+        @test_throws ArgumentError expiryof(ttl, now)
+        @test_throws ArgumentError ttlseconds(ttl)
+    end
+    @test ttlseconds(nextfloat(0.0005)) == nextfloat(0.0005)
+    @test ttlseconds(Millisecond(1)) == 0.001
 end
 
 @testset "modify! semantics" begin
