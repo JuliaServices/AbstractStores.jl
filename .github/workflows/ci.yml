@@ -29,6 +29,7 @@ jobs:
           - os: macOS-latest
             arch: aarch64
             version: 1
+            mysql: '2'
           - os: ubuntu-latest
             arch: x64
             version: min
@@ -40,13 +41,12 @@ jobs:
           version: ${{ matrix.version }}
           arch: ${{ matrix.arch }}
       - uses: julia-actions/cache@v2
-      - name: Test the supported MySQL 1 series
-        if: matrix.mysql == '1'
+      - name: Select the MySQL driver series
         shell: julia --color=yes --project {0}
         run: |
           using TOML
           project = TOML.parsefile("Project.toml")
-          project["compat"]["MySQL"] = "1.5"
+          project["compat"]["MySQL"] = "${{ matrix.mysql }}" == "1" ? "1.5" : "2"
           open("Project.toml", "w") do io
             TOML.print(io, project)
           end
