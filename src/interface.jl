@@ -412,10 +412,12 @@ function modify!(::Type{V}, f, store::AbstractStore, key::AbstractString; ttl=no
     end
 end
 
-# Typed-passthrough entry points. Backends whose value type is the source of
-# truth (MemoryStore, SQL, Redis) ignore the requested type; FileStore uses it
-# to keep its codec concretely typed under a value-erased parent.
-Base.get(::Type, store::AbstractStore, key::AbstractString, default) = get(store, key, default)
+# Typed-passthrough entry points. FileStore uses the requested type to keep its
+# codec concretely typed under a value-erased parent. Backends whose value type
+# is the source of truth (MemoryStore, SQL, Redis) store what they are given;
+# the assertion still tells callers the value has the view's type.
+Base.get(::Type{T}, store::AbstractStore, key::AbstractString, default) where {T} =
+    get(store, key, default)::Union{T,typeof(default)}
 Base.keys(::Type, store::AbstractStore; prefix::AbstractString="") = keys(store; prefix)
 Base.put!(::Type, store::AbstractStore, key::AbstractString, value; ttl=nothing) =
     put!(store, key, value; ttl)
