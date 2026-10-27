@@ -185,13 +185,16 @@ end
 # failed statement leaves some drivers' connections unusable (MySQL answers the
 # next command with "Commands out of sync"; Postgres poisons an open
 # transaction). A conflict-tolerant insert plus the same token check used
-# everywhere else says exactly as much, quietly.
+# everywhere else says exactly as much, quietly. On MySQL that is a no-op
+# `ON DUPLICATE KEY UPDATE`, not `INSERT IGNORE`: IGNORE also downgrades other
+# errors to warnings, so a key too long for the column would be truncated into
+# a different key and written there.
 function casinsert(store::SQLStore, key::String, text::String,
                    expires::Union{Missing,Int64}, newtoken::Int64)
     d = store.dialect
     sql = d.name === :MySQL ?
-        "INSERT IGNORE INTO $(store.table) (store_key, store_value, expires_at, token) " *
-            "VALUES ($(placeholders(d, 4)))" :
+        "INSERT INTO $(store.table) (store_key, store_value, expires_at, token) " *
+            "VALUES ($(placeholders(d, 4))) ON DUPLICATE KEY UPDATE token = token" :
         "INSERT INTO $(store.table) (store_key, store_value, expires_at, token) " *
             "VALUES ($(placeholders(d, 4))) ON CONFLICT (store_key) DO NOTHING"
     won = Ref(false)
