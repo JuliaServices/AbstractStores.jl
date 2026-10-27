@@ -127,6 +127,14 @@ by [`sweep!`](@ref).
     its own.  Prepared statements are cached for the life of the store and are
     released when the connection is closed.
 
+!!! note "Several processes on one SQLite file"
+    Give each connection a busy timeout, e.g. `SQLite.busy_timeout(db, 10_000)`:
+    without one, a write that finds the file locked by another process fails at
+    once with "database is locked" instead of waiting its turn.  Use SQLite.jl
+    1.10 or later; earlier versions left the connection inside an open
+    transaction when a commit failed that way, so none of its later writes
+    were ever committed.
+
 !!! note "Requires DBInterface.jl"
     The methods live in a package extension.  `using DBInterface` alongside your
     driver (SQLite, MySQL, Postgres) to enable them.
