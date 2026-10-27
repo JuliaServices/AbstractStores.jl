@@ -176,6 +176,18 @@ end
             @test store.dialect.keytype == "VARBINARY(512)"   # byte-exact keys are load-bearing
             cipher = only(collect(DBInterface.execute(conn, "SHOW STATUS LIKE 'Ssl_cipher'")))
             @test isempty(String(cipher[2]))
+
+            # a key too long for the column fails every write the same way; it is
+            # never truncated into a different key and written there
+            s = SQLStore{String}(conn; table="longkeys")
+            empty!(s)
+            long = "k"^600
+            for write in (() -> put!(s, long, "v"), () -> modify!(_ -> "v", s, long),
+                          () -> get!(s, long, "v"))
+                err = try write(); nothing catch e; e end
+                @test err !== nothing && !(err isa ConcurrencyError)
+            end
+            @test isempty(s)
         end
     else
         @test_skip "MySQL backend (docker or MySQL.jl unavailable)"
