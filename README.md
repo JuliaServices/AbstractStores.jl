@@ -187,7 +187,8 @@ Loading the relevant package activates an extension providing the rest:
    row-locking semantics. The MySQL key column is `VARBINARY` — every utf8mb4
    collation folds *something*: case and accents by default, trailing spaces
    even under `utf8mb4_bin` — and prefix matching carries a byte-exact guard on
-   all three dialects.
+   all three dialects. Several processes sharing one SQLite file need a busy
+   timeout on each connection and SQLite.jl 1.10 or later; see `?SQLStore`.
 4. A compare-and-swap Lua script (loaded once, invoked by SHA), comparing a
    token rather than the value, so an A→B→A sequence is correctly detected as a
    conflict.
