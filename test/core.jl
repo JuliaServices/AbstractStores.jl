@@ -2,6 +2,24 @@ using AbstractStores: supportsttl, supportslisting, isatomic, encodekey, decodek
     Entry, expiryof, ttlseconds, likeprefix, globescape, detectdialect,
     SQLITE, MYSQL, POSTGRES, placeholder, placeholders
 
+# Encoded bytes that, as `put!` writes them, record the mode of the temp file
+# they are being written into.
+struct ModeRecordingBytes <: AbstractVector{UInt8}
+    dir::String
+    modes::Vector{Int}
+end
+Base.size(::ModeRecordingBytes) = (1,)
+function Base.getindex(b::ModeRecordingBytes, ::Int)
+    for name in readdir(b.dir)
+        startswith(name, ".tmp-") && push!(b.modes, Int(filemode(joinpath(b.dir, name)) & 0o777))
+    end
+    return 0x00
+end
+struct ModeRecordingCodec <: AbstractStores.AbstractCodec
+    bytes::ModeRecordingBytes
+end
+AbstractStores.encode(c::ModeRecordingCodec, value) = c.bytes
+
 @testset "MemoryStore" begin
     AbstractStores.runstoretests(() -> MemoryStore{String}(), ["a", "b", "c"])
     AbstractStores.runstoretests(() -> MemoryStore{Int}(), [1, 2, 3])
@@ -146,6 +164,16 @@ end
         none = FileStore{String}(mktempdir(); permissions=nothing, dirpermissions=nothing)
         none["k"] = "v"
         @test none["k"] == "v"
+
+        # the temp file is already private while the value is written into it,
+        # even in a directory others can read
+        if Sys.isunix()
+            shared = mktempdir()
+            chmod(shared, 0o755)
+            bytes = ModeRecordingBytes(shared, Int[])
+            put!(FileStore{String}(shared; codec=ModeRecordingCodec(bytes), dirpermissions=nothing), "k", "v")
+            @test bytes.modes == [0o600]
+        end
     end
 
     @testset "long keys" begin
