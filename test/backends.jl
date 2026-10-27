@@ -274,6 +274,18 @@ end
                 @test wins[] == 1
             end
 
+            @testset "listing a namespace in a busy database takes few round trips" begin
+                s = fresh(String)
+                put!(s, "mine", "v")
+                cmd(T, args...) = Redis.execute(client, AbstractStoresRedisExt.rawcommand(T, args...))
+                cmd(Int, "EVAL", "for i = 1, 5000 do redis.call('SET', 'unrelated:' .. i, 'x') end return 1", "0")
+                cmd(String, "CONFIG", "RESETSTAT")
+                @test collect(keys(s)) == ["mine"]
+                scans = match(r"cmdstat_scan:calls=(\d+)", cmd(String, "INFO", "commandstats"))
+                @test parse(Int, scans[1]) <= 20     # the server default COUNT needs ~500
+                cmd(Int, "EVAL", "for i = 1, 5000 do redis.call('DEL', 'unrelated:' .. i) end return 1", "0")
+            end
+
             empty!(store)
         end
     end
