@@ -67,8 +67,20 @@ end
 Base.haskey(store::RedisStore, key::AbstractString) =
     Redis.execute(store.client, rawcommand(Int, "EXISTS", String(key))) > 0
 
-Base.keys(store::RedisStore; prefix::AbstractString="") =
-    String[k for k in Redis.Scan(store.client, globescape(prefix) * "*")]
+# SCAN examines about COUNT slots of the whole database per round trip, however
+# few keys match; the server default of 10 makes listing a namespace in a busy
+# database take one round trip per ten keys it holds.
+function Base.keys(store::RedisStore; prefix::AbstractString="")
+    pattern = globescape(prefix) * "*"
+    found = String[]
+    cursor = "0"
+    while true
+        cursor, batch = Redis.execute(store.client,
+            rawcommand(Any, "SCAN", cursor, "MATCH", pattern, "COUNT", "1000"))
+        append!(found, batch)
+        cursor == "0" && return found
+    end
+end
 
 function Base.empty!(store::RedisStore; prefix::AbstractString="")
     for key in keys(store; prefix)
