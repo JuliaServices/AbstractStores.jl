@@ -236,11 +236,13 @@ function Base.put!(::Type{T}, store::FileStore, key::AbstractString, value; ttl=
         try
             io = open(tmp; write=true, create=true, truncate=true)
             try
+                # restrict the file before it holds the value: a crash after the
+                # write must not leave a world-readable copy behind
+                store.permissions === nothing || chmod(tmp, Int(store.permissions))
                 write(io, bytes)
             finally
                 close(io)
             end
-            store.permissions === nothing || chmod(tmp, Int(store.permissions))
             # `Base.Filesystem.rename`, not `mv(force=true)`: mv on Julia < 1.12
             # deletes the destination before renaming, so a crash in between
             # loses the old value and a concurrent reader sees the key vanish.
