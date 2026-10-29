@@ -196,6 +196,20 @@ end
 
 #-------------------------------------------------------------------------------
 
+# SCAN returns a key again when the server rehashes between calls (busy
+# databases do, under write load); listing must still name each key once.
+struct ScanPages
+    pages::Vector{Any}
+end
+
+if HAS_REDIS
+    Redis.execute(c::ScanPages, ::Redis.Commands.Command) = popfirst!(c.pages)
+    @testset "RedisStore lists each key once" begin
+        store = RedisStore{String}(ScanPages(Any[Any["7", Any["a", "b"]], Any["0", Any["b", "c"]]]))
+        @test sort(keys(store)) == ["a", "b", "c"]
+    end
+end
+
 @testset "RedisStore" begin
     if !(DOCKER && HAS_REDIS)
         @test_skip "Redis backend (docker or Redis.jl unavailable)"
