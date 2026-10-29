@@ -69,7 +69,8 @@ Base.haskey(store::RedisStore, key::AbstractString) =
 
 # SCAN examines about COUNT slots of the whole database per round trip, however
 # few keys match; the server default of 10 makes listing a namespace in a busy
-# database take one round trip per ten keys it holds.
+# database take one round trip per ten keys it holds. SCAN can return a key more
+# than once when the server rehashes between calls, so dedupe.
 function Base.keys(store::RedisStore; prefix::AbstractString="")
     pattern = globescape(prefix) * "*"
     found = String[]
@@ -78,7 +79,7 @@ function Base.keys(store::RedisStore; prefix::AbstractString="")
         cursor, batch = Redis.execute(store.client,
             rawcommand(Any, "SCAN", cursor, "MATCH", pattern, "COUNT", "1000"))
         append!(found, batch)
-        cursor == "0" && return found
+        cursor == "0" && return unique!(found)
     end
 end
 
