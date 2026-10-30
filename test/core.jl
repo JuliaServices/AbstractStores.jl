@@ -293,6 +293,18 @@ end
         sleep(0.1)
         @test Set(keys(typed)) == Set(["new", "existing", "created"])
     end
+
+    @testset "typed views over a value-erased MemoryStore" begin
+        parent = MemoryStore()
+        typed = PrefixedStore{Int}(parent, "n/")
+        typed["a"] = 1
+        @test @inferred(Union{Nothing,Int}, get(typed, "a", nothing)) === 1
+        @test @inferred(get(typed, "missing", 0)) === 0
+        @test @inferred(Union{Nothing,Int}, modify!(n -> n + 1, typed, "a")) === 2
+        # a value of the wrong type under the view's prefix is reported, not returned
+        parent["n/b"] = "two"
+        @test_throws TypeError get(typed, "b", nothing)
+    end
 end
 
 @testset "interface defaults" begin
