@@ -4,7 +4,7 @@ using Dates
 using CloudStore
 using AbstractStores
 using AbstractStores: AbstractStores, ObjectStore, Entry, objectkey, canexpire,
-    encode, decode, encodeentry, decodeentry, expiryof, checkttl, isexpired
+    encode, decode, encodeentry, decodeentry, expiryof, checkttl, isexpired, NOTFOUND
 
 AbstractStores.extensionloaded(::Type{<:ObjectStore}) = true
 
@@ -71,7 +71,7 @@ function Base.delete!(store::ObjectStore, key::AbstractString)
 end
 
 function Base.haskey(store::ObjectStore, key::AbstractString)
-    canexpire(store.codec) && return get(store, key, nothing) !== nothing
+    canexpire(store.codec) && return get(store, key, NOTFOUND) !== NOTFOUND
     try
         CloudStore.head(store.bucket, objectkey(store, key); credentials=store.credentials)
         return true

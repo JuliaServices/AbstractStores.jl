@@ -404,6 +404,13 @@ end
             @test sweep!(s) == 0     # the expired read already reclaimed it
         end
 
+        @testset "a stored `nothing` is present" begin
+            s = fresh(Union{Nothing,String}, "nothing/")
+            s["k"] = nothing
+            @test haskey(s, "k")
+            @test get(s, "k", :absent) === nothing
+        end
+
         @testset "RawCodec stores the value verbatim" begin
             raw = fresh(String, "raw/", RawCodec())
             @test !supportsttl(raw)
