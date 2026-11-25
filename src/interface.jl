@@ -391,13 +391,20 @@ end
 ```
 """
 modify!(f, store::AbstractStore{T}, key::AbstractString; ttl=nothing) where {T} =
-    modify!(T, f, store, key; ttl)
+    lockedmodify!(T, f, store, key; ttl)
 
 # Typed-passthrough form: `V` is the value type of the view driving this
-# round trip (see the typed `get`/`put!` entry points). Backends with a
-# native atomic modify! (Redis, SQL) receive it through this method too and
-# may ignore it.
-function modify!(::Type{V}, f, store::AbstractStore, key::AbstractString; ttl=nothing) where {V}
+# round trip (see the typed `get`/`put!` entry points). It defers to
+# `modify!(f, store, key)`, the method a backend overrides with a native
+# atomic operation, so a view over that backend keeps it. The lock-based
+# backends (MemoryStore, FileStore, ObjectStore) instead run
+# `lockedmodify!(V, ...)`, which reads and writes through the typed entry points.
+modify!(::Type, f, store::AbstractStore, key::AbstractString; ttl=nothing) =
+    modify!(f, store, key; ttl)
+
+# The generic read-modify-write: `get`, `f`, then `put!` or `delete!`, all
+# under `lock(store)`, so it is exactly as atomic as that lock.
+function lockedmodify!(::Type{V}, f, store::AbstractStore, key::AbstractString; ttl=nothing) where {V}
     checkttl(store, ttl)
     return lock(store) do
         old = get(V, store, key, nothing)

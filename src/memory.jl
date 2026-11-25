@@ -48,6 +48,8 @@ supportslisting(::MemoryStore) = true
 isatomic(::MemoryStore) = true
 
 Base.lock(f, store::MemoryStore) = withstorelock(f, store.lock)
+modify!(::Type{V}, f, store::MemoryStore, key::AbstractString; ttl=nothing) where {V} =
+    lockedmodify!(V, f, store, key; ttl)
 
 function Base.get(store::MemoryStore, key::AbstractString, default)
     return @lock store.lock begin

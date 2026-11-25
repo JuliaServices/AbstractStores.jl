@@ -170,6 +170,8 @@ supportslisting(::FileStore) = true
 isatomic(::FileStore) = false
 
 Base.lock(f, store::FileStore) = withstorelock(f, store.lock)
+modify!(::Type{V}, f, store::FileStore, key::AbstractString; ttl=nothing) where {V} =
+    lockedmodify!(V, f, store, key; ttl)
 
 function keypath(store::FileStore, key::AbstractString)
     isempty(key) && throw(ArgumentError(

@@ -408,6 +408,41 @@ end
     @test_throws InexactError get!(store, "invalid", 1.5)
 end
 
+@testset "views keep a backend's own modify!" begin
+    # A third-party store that overrides `modify!(f, store, key)`, the documented
+    # hook for a native atomic read-modify-write. Its Base.lock is the no-op
+    # default, so only its own modify! is atomic.
+    struct NativeModifyStore <: AbstractStore{Int}
+        d::Dict{String,Int}
+        calls::Base.RefValue{Int}
+    end
+    Base.get(s::NativeModifyStore, k::AbstractString, default) = get(s.d, String(k), default)
+    Base.put!(s::NativeModifyStore, k::AbstractString, v; ttl=nothing) = (s.d[String(k)] = v; s)
+    Base.delete!(s::NativeModifyStore, k::AbstractString) = (delete!(s.d, String(k)); s)
+    Base.keys(s::NativeModifyStore; prefix::AbstractString="") =
+        [k for k in keys(s.d) if startswith(k, prefix)]
+    AbstractStores.isatomic(::NativeModifyStore) = true
+    function AbstractStores.modify!(f, s::NativeModifyStore, k::AbstractString; ttl=nothing)
+        s.calls[] += 1
+        old = get(s.d, String(k), nothing)
+        new = f(old)
+        new === old && return new
+        new === nothing ? delete!(s.d, String(k)) : (s.d[String(k)] = new)
+        return new
+    end
+
+    backend = NativeModifyStore(Dict{String,Int}(), Ref(0))
+    for view in (PrefixedStore(backend, "a/"),
+                 PrefixedStore{Int}(PrefixedStore(backend, "b/"), "c/"))
+        backend.calls[] = 0
+        @test isatomic(view)
+        @test modify!(n -> something(n, 0) + 1, view, "n") == 1
+        @test get!(view, "g", 5) == 5
+        @test pop!(view, "n") == 1
+        @test backend.calls[] == 3
+    end
+end
+
 @testset "SQL helpers" begin
     @test placeholder(SQLITE, 1) == "?"
     @test placeholder(POSTGRES, 3) == "\$3"

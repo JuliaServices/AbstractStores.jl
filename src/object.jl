@@ -85,6 +85,8 @@ supportslisting(::ObjectStore) = true
 isatomic(::ObjectStore) = false
 
 Base.lock(f, store::ObjectStore) = withstorelock(f, store.lock)
+modify!(::Type{V}, f, store::ObjectStore, key::AbstractString; ttl=nothing) where {V} =
+    lockedmodify!(V, f, store, key; ttl)
 
 """
     AbstractStores.checkobjectkey(key)
