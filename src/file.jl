@@ -152,6 +152,13 @@ struct FileStore{T,C<:AbstractCodec} <: AbstractStore{T}
     lock::ReentrantLock
 end
 
+# One lock per directory, shared by every FileStore opened on it in this process,
+# so a read-modify-write is serialized against all of them, not only against
+# users of the same store object.
+const DIRLOCKS = Dict{String,ReentrantLock}()
+const DIRLOCKS_LOCK = ReentrantLock()
+dirlock(path::String) = withstorelock(() -> get!(ReentrantLock, DIRLOCKS, realpath(path)), DIRLOCKS_LOCK)
+
 function FileStore{T}(dir::AbstractString;
                       codec::AbstractCodec=SerializedCodec(),
                       permissions::Union{Nothing,Integer}=0o600,
@@ -160,7 +167,7 @@ function FileStore{T}(dir::AbstractString;
     isdir(path) || mkpath(path)
     dirpermissions === nothing || chmod(path, Int(dirpermissions))
     perm = permissions === nothing ? nothing : UInt16(permissions)
-    return FileStore{T,typeof(codec)}(path, codec, perm, ReentrantLock())
+    return FileStore{T,typeof(codec)}(path, codec, perm, dirlock(path))
 end
 
 FileStore(dir::AbstractString; kw...) = FileStore{Any}(dir; kw...)
