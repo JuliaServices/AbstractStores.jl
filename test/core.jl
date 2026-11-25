@@ -307,6 +307,15 @@ end
     end
 end
 
+@testset "pairs skips a key that vanishes after listing" begin
+    store = MemoryStore{String}()
+    store["gone"] = "x"
+    store["kept"] = "y"
+    listed = pairs(store)           # keys are listed here...
+    delete!(store, "gone")          # ...and one disappears (deleted or expired) before its get
+    @test collect(listed) == ["kept" => "y"]
+end
+
 @testset "interface defaults" begin
     # a store implementing only the required methods still gets everything derived
     struct MinimalStore <: AbstractStore{String}
