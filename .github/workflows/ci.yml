@@ -30,12 +30,21 @@ jobs:
           - x64
         mysql:
           - '2'
+        # The newer ubuntu-latest image refuses Julia 1.10.0's libopenlibm, which
+        # asks for an executable stack, so the min jobs run on ubuntu-24.04.
+        exclude:
+          - os: ubuntu-latest
+            version: 'min'
         include:
+          - os: ubuntu-24.04
+            arch: x64
+            version: min
+            mysql: '2'
           - os: macOS-latest
             arch: aarch64
             version: 1
             mysql: '2'
-          - os: ubuntu-latest
+          - os: ubuntu-24.04
             arch: x64
             version: min
             mysql: '1'
