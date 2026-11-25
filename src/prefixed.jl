@@ -91,11 +91,10 @@ end
 Base.empty!(store::PrefixedStore; prefix::AbstractString="") =
     (empty!(store.parent; prefix=full(store, prefix)); store)
 
-# forward to the parent so a native atomic implementation is not lost
-# Forwarded WITH the view's value type: backends with a native atomic
-# read-modify-write (Redis, SQL) keep their own modify!, while the generic
-# lock+get+put! loop on file/memory backends round-trips through the typed
-# entry points so the codec sees the view's concrete T.
+# Forwarded to the parent WITH the view's value type: a backend with a native
+# atomic read-modify-write keeps its own `modify!(f, store, key)`, while the
+# lock-based backends round-trip through the typed entry points so the codec
+# sees the view's concrete T.
 modify!(f, store::PrefixedStore{T}, key::AbstractString; ttl=nothing) where {T} =
     modify!(T, f, store, key; ttl)
 
