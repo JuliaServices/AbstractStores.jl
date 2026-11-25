@@ -574,9 +574,12 @@ end
 Iterate `key => value` pairs.  Issues one `get` per key, so this is `N+1`
 round-trips against a remote store; it is intended for small stores, debugging,
 and tests.
+
+A key that expires or is deleted between the listing and its `get` is skipped.
 """
 function Base.pairs(store::AbstractStore; prefix::AbstractString="")
-    return (key => store[key] for key in keys(store; prefix))
+    fetched = ((key, get(store, key, NOTFOUND)) for key in keys(store; prefix))
+    return (key => value for (key, value) in fetched if value !== NOTFOUND)
 end
 
 """
