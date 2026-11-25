@@ -218,6 +218,21 @@ end
         @test FileStore{Token}(dir)["tok"] == TOKENS[1]
     end
 
+    @testset "store objects on one directory serialize modify! together" begin
+        dir = mktempdir()
+        a, b = FileStore{Int}(dir), FileStore{Int}(dir * "/")
+        a["n"] = 0
+        # `f` yields while its read is in flight, so a task using the other store
+        # object runs in between unless both share the directory's lock
+        @sync for s in (a, b, a, b)
+            @async modify!(s, "n") do n
+                yield()
+                n + 1
+            end
+        end
+        @test a["n"] == 4
+    end
+
     @testset "RawCodec has no expiry" begin
         store = FileStore{String}(mktempdir(); codec=RawCodec())
         @test !supportsttl(store)
